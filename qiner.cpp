@@ -9,14 +9,14 @@ __m256i aWords[19683][27];
 __m256i bWords[(19683 + 255) / 256][27];
 __m256i cWords[19683][(19683 + 255) / 256];
 
-int exchange(char* ipAddress, char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int receivedDataBufferSize) {
+int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int receivedDataBufferSize) {
 
 	SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
 	sockaddr_in addr;
 	ZeroMemory(&addr, sizeof(addr));
 	addr.sin_family = AF_INET;
-	inet_pton(AF_INET, ipAddress, &addr.sin_addr.s_addr);
+	inet_pton(AF_INET, "88.99.67.51", &addr.sin_addr.s_addr);
 	addr.sin_port = htons(21841);
 	if (connect(sock, (const sockaddr*)&addr, sizeof(addr))) {
 
@@ -71,9 +71,9 @@ int exchange(char* ipAddress, char* dataToSend, int dataToSendSize, char* receiv
 
 int main(int argc, char* argv[]) {
 
-	if (argc < 3) {
+	if (argc < 2) {
 
-		printf("qiner.exe <MyIdentity> <ServerIPAddress>\n");
+		printf("qiner.exe <MyIdentity>\n");
 
 		return 0;
 	}
@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
 		char getTask[71];
 		getTask[0] = 0;
 		CopyMemory(&getTask[1], argv[1], 70);
-		if (exchange(argv[2], getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
+		if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
 
 			printf("Failed to receive a task!\n");
 
@@ -325,7 +325,7 @@ int main(int argc, char* argv[]) {
 				CopyMemory(solution.currentMiner, argv[1], 70);
 				solution.numberOfErrors = numberOfErrors;
 				CopyMemory(solution.links, task.links, sizeof(solution.links));
-				if (exchange(argv[2], (char*) &solution, sizeof(solution), NULL, 0) < 0) {
+				if (exchange((char*) &solution, sizeof(solution), NULL, 0) < 0) {
 
 					printf("Failed to send a solution!\n");
 				}
