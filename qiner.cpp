@@ -195,7 +195,7 @@ int main(int argc, char* argv[]) {
 			_rdrand32_step(&inputToChange);
 			unsigned int link;
 			_rdrand32_step(&link);
-			//task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
+			task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
 
 			int numberOfNeurons = 0;
 			char neuronFlags[LIMIT];
@@ -305,14 +305,13 @@ int main(int argc, char* argv[]) {
 				numberOfErrors += (int) (_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3]));
 			}
 
-			FILETIME finish;
-			GetSystemTimePreciseAsFileTime(&finish);
-			ULARGE_INTEGER s, f;
-			memcpy(&s, &start, sizeof(ULARGE_INTEGER));
-			memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
-			printf("%d / %d errors (%llu ms)\n", numberOfErrors, task.numberOfErrors, (f.QuadPart - s.QuadPart) / 10000);
-
 			if (numberOfErrors < task.numberOfErrors) {
+
+				FILETIME finish;
+				GetSystemTimePreciseAsFileTime(&finish);
+				ULARGE_INTEGER s, f;
+				memcpy(&s, &start, sizeof(ULARGE_INTEGER));
+				memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
 
 				struct Solution {
 
@@ -332,7 +331,7 @@ int main(int argc, char* argv[]) {
 				}
 				else {
 
-					printf("Sent a solution reducing number of errors to %d (%d neurons in %d layers)\n\n", numberOfErrors, numberOfNeurons, numberOfLayers);
+					printf("Managed to find a solution reducing number of errors to %d (%d neurons in %d layers) within %d ms\n\n", numberOfErrors, numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
 				}
 			}
 		}
