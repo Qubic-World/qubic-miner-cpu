@@ -49,7 +49,7 @@ int exchange(char* ipAddress, char* dataToSend, int dataToSendSize, char* receiv
 			int numberOfBytes;
 			if ((numberOfBytes = recv(sock, receivedDataBuffer, receivedDataBufferSize, 0)) == SOCKET_ERROR) {
 
-				printf("Failed to send (%i)!\n", WSAGetLastError());
+				printf("Failed to receive (%i)!\n", WSAGetLastError());
 				closesocket(sock);
 
 				return -1;
@@ -148,20 +148,36 @@ int main(int argc, char* argv[]) {
 			int numberOfMiners;
 			char topMiners[70][10];
 			int topMinerScores[10];
+			int currentMinerPlace;
 			int currentMinerScore;
-			int lowestNumberOfErrors;
-			short links[LIMIT][3];
+			int numberOfErrors;
+			int links[LIMIT][3];
 
 		} task;
 
-		char getTask[1] = { 0 };
-		if (exchange(argv[2], getTask, sizeof(getTask), (char*)&task, sizeof(task)) < 0) {
+		char getTask[71];
+		getTask[0] = 0;
+		CopyMemory(&getTask[1], argv[1], 70);
+		if (exchange(argv[2], getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
 
 			printf("Failed to receive a task!\n");
 
 			Sleep(5000);
 		}
 		else {
+
+			printf("--- Top 10 miners out of %d:\n", task.numberOfMiners);
+			for (int i = 0; i < 10; i++) {
+
+				printf(" #%2d   *   %.10s...   *   %6d\n", i, task.topMiners[i], task.topMinerScores[i]);
+			}
+			printf("---\n");
+			printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
+			printf("---\n");
+			printf("There are %d errors left\n\n", task.numberOfErrors);
+
+			FILETIME start;
+			GetSystemTimePreciseAsFileTime(&start);
 
 			unsigned int numberOfSteps;
 			_rdrand32_step(&numberOfSteps);
@@ -179,7 +195,7 @@ int main(int argc, char* argv[]) {
 			_rdrand32_step(&inputToChange);
 			unsigned int link;
 			_rdrand32_step(&link);
-			task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
+			//task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
 
 			int numberOfNeurons = 0;
 			char neuronFlags[LIMIT];
@@ -191,7 +207,7 @@ int main(int argc, char* argv[]) {
 			neuronFlags[LIMIT - 1] = 1;
 			for (int i = LIMIT; i-- > 54; ) {
 
-				if (!neuronFlags[i]) {
+				if (neuronFlags[i]) {
 
 					neuronFlags[task.links[i][0]] = 1;
 					neuronFlags[task.links[i][1]] = 1;
@@ -201,10 +217,10 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
-			short links[LIMIT][3];
+			int links[LIMIT][3];
 
 			int currentNeuronIndex = 54;
-			short mapping[LIMIT];
+			int mapping[LIMIT];
 			for (int i = 0; i < 54; i++) {
 
 				mapping[i] = i;
@@ -225,7 +241,7 @@ int main(int argc, char* argv[]) {
 
 				neuronLayers[i] = 0;
 			}
-			for (int i = 54; i < numberOfNeurons; i++) {
+			for (int i = 54; i < currentNeuronIndex; i++) {
 
 				neuronLayers[i] = neuronLayers[links[i][0]];
 				if (neuronLayers[links[i][1]] > neuronLayers[i]) {
@@ -238,11 +254,11 @@ int main(int argc, char* argv[]) {
 				}
 				neuronLayers[i]++;
 			}
-			int numberOfLayers = neuronLayers[LIMIT - 1];
+			int numberOfLayers = neuronLayers[currentNeuronIndex - 1];
 
 			int numberOfErrors = 0;
 
-			for (int shiftedA = 0; numberOfErrors < task.lowestNumberOfErrors && shiftedA < 19683; shiftedA++) {
+			for (int shiftedA = 0; numberOfErrors < task.numberOfErrors && shiftedA < 19683; shiftedA++) {
 
 				__m256i values0[LIMIT];
 				__m256i values1[LIMIT];
@@ -256,7 +272,7 @@ int main(int argc, char* argv[]) {
 					memcpy(&values1[27], &bWords[bChunkIndex + 1], sizeof(__m256i) * 27);
 
 					int nextLink0 = links[54][0], nextLink1 = links[54][1], nextLink2 = links[54][2];
-					for (int i = 54; i < numberOfNeurons; ) {
+					for (int i = 54; i < currentNeuronIndex; ) {
 
 						const __m256i tmp00 = _mm256_and_si256(values0[nextLink0], values0[nextLink1]);
 						const __m256i tmp10 = _mm256_and_si256(values1[nextLink0], values1[nextLink1]);
@@ -270,43 +286,53 @@ int main(int argc, char* argv[]) {
 					}
 
 					long differences0[4], differences1[4];
-					_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[numberOfNeurons - 1], cWords[shiftedA][bChunkIndex++]));
-					_mm256_storeu_si256((__m256i*) differences1, _mm256_xor_si256(values1[numberOfNeurons - 1], cWords[shiftedA][bChunkIndex++]));
+					_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
+					_mm256_storeu_si256((__m256i*) differences1, _mm256_xor_si256(values1[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
 					numberOfErrors += (int) (_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
 						+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3]));
 				}
 
 				memcpy(&values0[27], &bWords[(19683 + 255) / 256 - 1], sizeof(__m256i) * 27);
 
-				for (int i = 54; i < numberOfNeurons; i++) {
+				for (int i = 54; i < currentNeuronIndex; i++) {
 
 					const __m256i tmp01 = _mm256_and_si256(_mm256_and_si256(values0[links[i][0]], values0[links[i][1]]), values0[links[i][2]]);
 					values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
 				}
 
 				long differences0[4];
-				_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[numberOfNeurons - 1], cWords[shiftedA][(19683 + 255) / 256 - 1]));
+				_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][(19683 + 255) / 256 - 1]));
 				numberOfErrors += (int) (_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3]));
 			}
 
-			if (numberOfErrors < task.lowestNumberOfErrors) {
+			FILETIME finish;
+			GetSystemTimePreciseAsFileTime(&finish);
+			ULARGE_INTEGER s, f;
+			memcpy(&s, &start, sizeof(ULARGE_INTEGER));
+			memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
+			printf("%d / %d errors (%llu ms)\n", numberOfErrors, task.numberOfErrors, (f.QuadPart - s.QuadPart) / 10000);
+
+			if (numberOfErrors < task.numberOfErrors) {
 
 				struct Solution {
 
 					char command;
 					char currentMiner[70];
-					short links[LIMIT][3];
+					int numberOfErrors;
+					int links[LIMIT][3];
 
 				} solution;
 				solution.command = 1;
 				CopyMemory(solution.currentMiner, argv[1], 70);
+				solution.numberOfErrors = numberOfErrors;
 				CopyMemory(solution.links, task.links, sizeof(solution.links));
 				if (exchange(argv[2], (char*) &solution, sizeof(solution), NULL, 0) < 0) {
 
 					printf("Failed to send a solution!\n");
 				}
 				else {
-					printf("Sent a solution successfully.");
+
+					printf("Sent a solution reducing number of errors to %d (%d neurons in %d layers)\n\n", numberOfErrors, numberOfNeurons, numberOfLayers);
 				}
 			}
 		}
