@@ -5,6 +5,20 @@
 
 #define LIMIT 10000
 
+char miner[70];
+
+volatile struct Task {
+
+	int numberOfMiners;
+	char topMiners[70][10];
+	int topMinerScores[10];
+	int currentMinerPlace;
+	int currentMinerScore;
+	int numberOfErrors;
+	int links[LIMIT][3];
+
+} task;
+
 __m256i aWords[19683][27];
 __m256i bWords[(19683 + 255) / 256][27];
 __m256i cWords[19683][(19683 + 255) / 256];
@@ -69,11 +83,211 @@ int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int
 	return totalNumberOfReceivedBytes;
 }
 
+DWORD WINAPI miningProc(LPVOID lpParameter) {
+
+	if (!lpParameter) {
+
+		Sleep(5000);
+	}
+
+	while (TRUE) {
+
+		if (lpParameter) {
+
+			while (TRUE) {
+
+				char getTask[71];
+				getTask[0] = 0;
+				CopyMemory(&getTask[1], miner, 70);
+				if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
+
+					printf("Failed to receive a task!\n");
+
+					Sleep(5000);
+				}
+				else {
+
+					printf("--- Top 10 miners out of %d:\n", task.numberOfMiners);
+					for (int i = 0; i < 10; i++) {
+
+						printf(" #%2d   *   %.10s...   *   %6d\n", i + 1, task.topMiners[i], task.topMinerScores[i]);
+					}
+					printf("---\n");
+					printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
+					printf("---\n");
+					printf("There are %d errors left\n\n", task.numberOfErrors);
+
+					break;
+				}
+			}
+		}
+
+		FILETIME start;
+		GetSystemTimePreciseAsFileTime(&start);
+
+		unsigned int numberOfSteps;
+		_rdrand32_step(&numberOfSteps);
+		numberOfSteps %= LIMIT;
+		int neuronToChange = LIMIT - 1;
+		unsigned int inputToChange;
+		while (numberOfSteps-- > 0) {
+
+			_rdrand32_step(&inputToChange);
+			if ((neuronToChange = task.links[neuronToChange][inputToChange % 3]) < 54) {
+
+				neuronToChange = LIMIT - 1;
+			}
+		}
+		_rdrand32_step(&inputToChange);
+		unsigned int link;
+		_rdrand32_step(&link);
+		task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
+
+		int numberOfNeurons = 0;
+		char neuronFlags[LIMIT];
+
+		for (int i = 54; i < LIMIT - 1; i++) {
+
+			neuronFlags[i] = 0;
+		}
+		neuronFlags[LIMIT - 1] = 1;
+		for (int i = LIMIT; i-- > 54; ) {
+
+			if (neuronFlags[i]) {
+
+				neuronFlags[task.links[i][0]] = 1;
+				neuronFlags[task.links[i][1]] = 1;
+				neuronFlags[task.links[i][2]] = 1;
+
+				numberOfNeurons++;
+			}
+		}
+
+		int links[LIMIT][3];
+
+		int currentNeuronIndex = 54;
+		int mapping[LIMIT];
+		for (int i = 0; i < 54; i++) {
+
+			mapping[i] = i;
+		}
+		for (int i = 54; i < LIMIT; i++) {
+
+			if (neuronFlags[i]) {
+
+				links[currentNeuronIndex][0] = mapping[task.links[i][0]];
+				links[currentNeuronIndex][1] = mapping[task.links[i][1]];
+				links[currentNeuronIndex][2] = mapping[task.links[i][2]];
+				mapping[i] = currentNeuronIndex++;
+			}
+		}
+
+		int neuronLayers[LIMIT];
+		for (int i = 0; i < 54; i++) {
+
+			neuronLayers[i] = 0;
+		}
+		for (int i = 54; i < currentNeuronIndex; i++) {
+
+			neuronLayers[i] = neuronLayers[links[i][0]];
+			if (neuronLayers[links[i][1]] > neuronLayers[i]) {
+
+				neuronLayers[i] = neuronLayers[links[i][1]];
+			}
+			if (neuronLayers[links[i][2]] > neuronLayers[i]) {
+
+				neuronLayers[i] = neuronLayers[links[i][2]];
+			}
+			neuronLayers[i]++;
+		}
+		int numberOfLayers = neuronLayers[currentNeuronIndex - 1];
+
+		int numberOfErrors = 0;
+
+		for (int shiftedA = 0; numberOfErrors < task.numberOfErrors && shiftedA < 19683; shiftedA++) {
+
+			__m256i values0[LIMIT];
+			__m256i values1[LIMIT];
+
+			memcpy(&values0[0], &aWords[shiftedA], sizeof(__m256i) * 27);
+			memcpy(&values1[0], &aWords[shiftedA], sizeof(__m256i) * 27);
+
+			for (int bChunkIndex = 0; bChunkIndex < (19683 + 255) / 256 - 1; ) {
+
+				memcpy(&values0[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
+				memcpy(&values1[27], &bWords[bChunkIndex + 1], sizeof(__m256i) * 27);
+
+				int nextLink0 = links[54][0], nextLink1 = links[54][1], nextLink2 = links[54][2];
+				for (int i = 54; i < currentNeuronIndex; ) {
+
+					const __m256i tmp00 = _mm256_and_si256(values0[nextLink0], values0[nextLink1]);
+					const __m256i tmp10 = _mm256_and_si256(values1[nextLink0], values1[nextLink1]);
+					const __m256i tmp01 = _mm256_and_si256(tmp00, values0[nextLink2]);
+					const __m256i tmp11 = _mm256_and_si256(tmp10, values1[nextLink2]);
+					values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
+					values1[i++] = _mm256_xor_si256(tmp11, _mm256_cmpeq_epi32(tmp11, tmp11));
+					nextLink0 = links[i][0];
+					nextLink1 = links[i][1];
+					nextLink2 = links[i][2];
+				}
+
+				long differences0[4], differences1[4];
+				_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
+				_mm256_storeu_si256((__m256i*) differences1, _mm256_xor_si256(values1[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
+				numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
+					+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3]));
+			}
+
+			memcpy(&values0[27], &bWords[(19683 + 255) / 256 - 1], sizeof(__m256i) * 27);
+
+			for (int i = 54; i < currentNeuronIndex; i++) {
+
+				const __m256i tmp01 = _mm256_and_si256(_mm256_and_si256(values0[links[i][0]], values0[links[i][1]]), values0[links[i][2]]);
+				values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
+			}
+
+			long differences0[4];
+			_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][(19683 + 255) / 256 - 1]));
+			numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3]));
+		}
+
+		if (numberOfErrors < task.numberOfErrors) {
+
+			FILETIME finish;
+			GetSystemTimePreciseAsFileTime(&finish);
+			ULARGE_INTEGER s, f;
+			memcpy(&s, &start, sizeof(ULARGE_INTEGER));
+			memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
+
+			struct Solution {
+
+				char command;
+				char currentMiner[70];
+				int numberOfErrors;
+				int links[LIMIT][3];
+
+			} solution;
+			solution.command = 1;
+			CopyMemory(solution.currentMiner, miner, 70);
+			solution.numberOfErrors = numberOfErrors;
+			CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
+			if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
+
+				printf("Failed to send a solution!\n");
+			}
+			else {
+
+				printf("Managed to find a solution reducing number of errors to %d (%d neurons in %d layers) within %llu ms\n\n", numberOfErrors, numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
+			}
+		}
+	}
+}
+
 int main(int argc, char* argv[]) {
 
-	if (argc < 2) {
+	if (argc < 3) {
 
-		printf("qiner.exe <MyIdentity>\n");
+		printf("qiner.exe <MyIdentity> <NumberOfMiningThreads>\n");
 
 		return 0;
 	}
@@ -138,202 +352,14 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
+	CopyMemory(miner, argv[1], 70);
+
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-	while (TRUE) {
+	for (int i = 0; i < atoi(argv[2]) - 1; i++) {
 
-		struct Task {
-
-			int numberOfMiners;
-			char topMiners[70][10];
-			int topMinerScores[10];
-			int currentMinerPlace;
-			int currentMinerScore;
-			int numberOfErrors;
-			int links[LIMIT][3];
-
-		} task;
-
-		char getTask[71];
-		getTask[0] = 0;
-		CopyMemory(&getTask[1], argv[1], 70);
-		if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
-
-			printf("Failed to receive a task!\n");
-
-			Sleep(5000);
-		}
-		else {
-
-			printf("--- Top 10 miners out of %d:\n", task.numberOfMiners);
-			for (int i = 0; i < 10; i++) {
-
-				printf(" #%2d   *   %.10s...   *   %6d\n", i, task.topMiners[i], task.topMinerScores[i]);
-			}
-			printf("---\n");
-			printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
-			printf("---\n");
-			printf("There are %d errors left\n\n", task.numberOfErrors);
-
-			FILETIME start;
-			GetSystemTimePreciseAsFileTime(&start);
-
-			unsigned int numberOfSteps;
-			_rdrand32_step(&numberOfSteps);
-			numberOfSteps %= LIMIT;
-			int neuronToChange = LIMIT - 1;
-			unsigned int inputToChange;
-			while (numberOfSteps-- > 0) {
-
-				_rdrand32_step(&inputToChange);
-				if ((neuronToChange = task.links[neuronToChange][inputToChange % 3]) < 54) {
-
-					neuronToChange = LIMIT - 1;
-				}
-			}
-			_rdrand32_step(&inputToChange);
-			unsigned int link;
-			_rdrand32_step(&link);
-			task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
-
-			int numberOfNeurons = 0;
-			char neuronFlags[LIMIT];
-
-			for (int i = 54; i < LIMIT - 1; i++) {
-
-				neuronFlags[i] = 0;
-			}
-			neuronFlags[LIMIT - 1] = 1;
-			for (int i = LIMIT; i-- > 54; ) {
-
-				if (neuronFlags[i]) {
-
-					neuronFlags[task.links[i][0]] = 1;
-					neuronFlags[task.links[i][1]] = 1;
-					neuronFlags[task.links[i][2]] = 1;
-
-					numberOfNeurons++;
-				}
-			}
-
-			int links[LIMIT][3];
-
-			int currentNeuronIndex = 54;
-			int mapping[LIMIT];
-			for (int i = 0; i < 54; i++) {
-
-				mapping[i] = i;
-			}
-			for (int i = 54; i < LIMIT; i++) {
-
-				if (neuronFlags[i]) {
-
-					links[currentNeuronIndex][0] = mapping[task.links[i][0]];
-					links[currentNeuronIndex][1] = mapping[task.links[i][1]];
-					links[currentNeuronIndex][2] = mapping[task.links[i][2]];
-					mapping[i] = currentNeuronIndex++;
-				}
-			}
-
-			int neuronLayers[LIMIT];
-			for (int i = 0; i < 54; i++) {
-
-				neuronLayers[i] = 0;
-			}
-			for (int i = 54; i < currentNeuronIndex; i++) {
-
-				neuronLayers[i] = neuronLayers[links[i][0]];
-				if (neuronLayers[links[i][1]] > neuronLayers[i]) {
-
-					neuronLayers[i] = neuronLayers[links[i][1]];
-				}
-				if (neuronLayers[links[i][2]] > neuronLayers[i]) {
-
-					neuronLayers[i] = neuronLayers[links[i][2]];
-				}
-				neuronLayers[i]++;
-			}
-			int numberOfLayers = neuronLayers[currentNeuronIndex - 1];
-
-			int numberOfErrors = 0;
-
-			for (int shiftedA = 0; numberOfErrors < task.numberOfErrors && shiftedA < 19683; shiftedA++) {
-
-				__m256i values0[LIMIT];
-				__m256i values1[LIMIT];
-
-				memcpy(&values0[0], &aWords[shiftedA], sizeof(__m256i) * 27);
-				memcpy(&values1[0], &aWords[shiftedA], sizeof(__m256i) * 27);
-
-				for (int bChunkIndex = 0; bChunkIndex < (19683 + 255) / 256 - 1; ) {
-
-					memcpy(&values0[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
-					memcpy(&values1[27], &bWords[bChunkIndex + 1], sizeof(__m256i) * 27);
-
-					int nextLink0 = links[54][0], nextLink1 = links[54][1], nextLink2 = links[54][2];
-					for (int i = 54; i < currentNeuronIndex; ) {
-
-						const __m256i tmp00 = _mm256_and_si256(values0[nextLink0], values0[nextLink1]);
-						const __m256i tmp10 = _mm256_and_si256(values1[nextLink0], values1[nextLink1]);
-						const __m256i tmp01 = _mm256_and_si256(tmp00, values0[nextLink2]);
-						const __m256i tmp11 = _mm256_and_si256(tmp10, values1[nextLink2]);
-						values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
-						values1[i++] = _mm256_xor_si256(tmp11, _mm256_cmpeq_epi32(tmp11, tmp11));
-						nextLink0 = links[i][0];
-						nextLink1 = links[i][1];
-						nextLink2 = links[i][2];
-					}
-
-					long differences0[4], differences1[4];
-					_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
-					_mm256_storeu_si256((__m256i*) differences1, _mm256_xor_si256(values1[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
-					numberOfErrors += (int) (_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
-						+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3]));
-				}
-
-				memcpy(&values0[27], &bWords[(19683 + 255) / 256 - 1], sizeof(__m256i) * 27);
-
-				for (int i = 54; i < currentNeuronIndex; i++) {
-
-					const __m256i tmp01 = _mm256_and_si256(_mm256_and_si256(values0[links[i][0]], values0[links[i][1]]), values0[links[i][2]]);
-					values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
-				}
-
-				long differences0[4];
-				_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][(19683 + 255) / 256 - 1]));
-				numberOfErrors += (int) (_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3]));
-			}
-
-			if (numberOfErrors < task.numberOfErrors) {
-
-				FILETIME finish;
-				GetSystemTimePreciseAsFileTime(&finish);
-				ULARGE_INTEGER s, f;
-				memcpy(&s, &start, sizeof(ULARGE_INTEGER));
-				memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
-
-				struct Solution {
-
-					char command;
-					char currentMiner[70];
-					int numberOfErrors;
-					int links[LIMIT][3];
-
-				} solution;
-				solution.command = 1;
-				CopyMemory(solution.currentMiner, argv[1], 70);
-				solution.numberOfErrors = numberOfErrors;
-				CopyMemory(solution.links, task.links, sizeof(solution.links));
-				if (exchange((char*) &solution, sizeof(solution), NULL, 0) < 0) {
-
-					printf("Failed to send a solution!\n");
-				}
-				else {
-
-					printf("Managed to find a solution reducing number of errors to %d (%d neurons in %d layers) within %d ms\n\n", numberOfErrors, numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
-				}
-			}
-		}
+		CreateThread(NULL, 0, miningProc, NULL, 0, NULL);
 	}
+	miningProc((LPVOID)1);
 }
