@@ -122,6 +122,9 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			}
 		}
 
+		Task task;
+		CopyMemory(&task, (const void*)&::task, sizeof(task));
+
 		FILETIME start;
 		GetSystemTimePreciseAsFileTime(&start);
 
