@@ -185,6 +185,8 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 		int numberOfErrors = 0;
 
+		//const long long xxx = __rdtsc();
+
 		for (int shiftedA = 0; numberOfErrors <= task.numberOfErrors && shiftedA < 19683; shiftedA++) {
 
 			__m256i values0[LIMIT];
@@ -198,21 +200,17 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				memcpy(&values0[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
 				memcpy(&values1[27], &bWords[bChunkIndex + 1], sizeof(__m256i) * 27);
 
-				int nextLink0 = links[54][0], nextLink1 = links[54][1], nextLink2 = links[54][2];
 				for (int i = 54; i < currentNeuronIndex; ) {
 
-					//values0[i] = _mm256_ternarylogic_epi32(values0[nextLink0], values0[nextLink1], values0[nextLink2], 0x7F);
-					//values1[i++] = _mm256_ternarylogic_epi32(values1[nextLink0], values1[nextLink1], values1[nextLink2], 0x7F);
+					//values0[i] = _mm256_ternarylogic_epi32(values0[links[i][0]], values0[links[i][1]], values0[links[i][2]], 0x7F);
+					//values1[i++] = _mm256_ternarylogic_epi32(values1[links[i][0]], values1[links[i][1]], values1[links[i][2]], 0x7F);
 
-					const __m256i tmp00 = _mm256_and_si256(values0[nextLink0], values0[nextLink1]);
-					const __m256i tmp10 = _mm256_and_si256(values1[nextLink0], values1[nextLink1]);
-					const __m256i tmp01 = _mm256_and_si256(tmp00, values0[nextLink2]);
-					const __m256i tmp11 = _mm256_and_si256(tmp10, values1[nextLink2]);
+					const __m256i tmp00 = _mm256_and_si256(values0[links[i][0]], values0[links[i][1]]);
+					const __m256i tmp10 = _mm256_and_si256(values1[links[i][0]], values1[links[i][1]]);
+					const __m256i tmp01 = _mm256_and_si256(tmp00, values0[links[i][2]]);
+					const __m256i tmp11 = _mm256_and_si256(tmp10, values1[links[i][2]]);
 					values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
 					values1[i++] = _mm256_xor_si256(tmp11, _mm256_cmpeq_epi32(tmp11, tmp11));
-					nextLink0 = links[i][0];
-					nextLink1 = links[i][1];
-					nextLink2 = links[i][2];
 				}
 
 				long differences0[4], differences1[4];
@@ -235,12 +233,17 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3]));
 		}
 
+		//printf("%llu!\n", __rdtsc() - xxx);
+
 		InterlockedIncrement64(&numberOfIterations);
 
 		BOOL improved = numberOfErrors < task.numberOfErrors ? TRUE : FALSE;
 		if (numberOfErrors <= task.numberOfErrors) {
 
-			InterlockedIncrement64(&numberOfOwnSolutions);
+			if (numberOfErrors < task.numberOfErrors) {
+
+				InterlockedIncrement64(&numberOfOwnSolutions);
+			}
 
 			do {
 
@@ -264,11 +267,17 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
 				if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
 
-					printf("Failed to send a solution!\n");
+					if (numberOfErrors < task.numberOfErrors) {
+
+						printf("Failed to send a solution!\n");
+					}
 				}
 				else {
 
-					printf("Managed to find a solution reducing number of errors by %d (%d neurons in %d layers) within %llu ms\n\n", (::task.numberOfErrors - numberOfErrors), numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
+					if (numberOfErrors < task.numberOfErrors) {
+
+						printf("Managed to find a solution reducing number of errors by %d (%d neurons in %d layers) within %llu ms\n\n", (task.numberOfErrors - numberOfErrors), numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
+					}
 				}
 
 				Sleep(5000);
