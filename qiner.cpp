@@ -5,6 +5,9 @@
 
 #define LIMIT 10000
 
+const long long launchTime = GetTickCount64() - 1;
+volatile long long numberOfIterations = 0, numberOfOwnSolutions = 0, numberOfAllSolutions = -1;
+
 char miner[70];
 
 volatile struct Task {
@@ -96,6 +99,8 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 			while (TRUE) {
 
+				int prevNumberOfErrors = task.numberOfErrors;
+
 				char getTask[71];
 				getTask[0] = 0;
 				CopyMemory(&getTask[1], miner, 70);
@@ -107,6 +112,11 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				}
 				else {
 
+					if (prevNumberOfErrors > task.numberOfErrors) {
+
+						InterlockedIncrement64(&numberOfAllSolutions);
+					}
+
 					printf("--- Top 10 miners out of %d:\n", task.numberOfMiners);
 					for (int i = 0; i < 10; i++) {
 
@@ -114,6 +124,11 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					}
 					printf("---\n");
 					printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
+					double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
+					printf("Your iteration rate on this hardware is %f iterations/s\n", numberOfIterations / delta);
+					printf("Your solution rate on this hardware is %f solutions/s\n", numberOfOwnSolutions / delta);
+					printf("Pool solution rate is %f solutions/s\n", numberOfAllSolutions / delta);
+					printf("");
 					printf("---\n");
 					printf("There are %d errors left\n\n", task.numberOfErrors);
 
@@ -257,7 +272,11 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3]));
 		}
 
+		InterlockedIncrement64(&numberOfIterations);
+
 		if (numberOfErrors < task.numberOfErrors) {
+
+			InterlockedIncrement64(&numberOfOwnSolutions);
 
 			while (numberOfErrors < ::task.numberOfErrors) {
 
@@ -373,9 +392,16 @@ int main(int argc, char* argv[]) {
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 
+	task.numberOfErrors = 0x7FFFFFFF;
+
 	for (int i = 0; i < atoi(argv[2]) - 1; i++) {
 
-		CreateThread(NULL, 0, miningProc, NULL, 0, NULL);
+		CreateThread(NULL, 2 * 1024 * 1024, miningProc, NULL, 0, NULL);
 	}
-	miningProc((LPVOID)1);
+	CreateThread(NULL, 2 * 1024 * 1024, miningProc, (LPVOID)1, 0, NULL);
+
+	while (TRUE) {
+
+		Sleep(1000);
+	}
 }
