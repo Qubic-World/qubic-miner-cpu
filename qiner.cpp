@@ -90,7 +90,10 @@ int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int
 
 DWORD WINAPI miningProc(LPVOID lpParameter) {
 
-	Sleep(5000);
+	while (task.numberOfErrors == 0x7FFFFFFF) {
+
+		Sleep(100);
+	}
 
 	while (TRUE) {
 
@@ -182,7 +185,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 		int numberOfErrors = 0;
 
-		for (int shiftedA = 0; numberOfErrors < task.numberOfErrors && shiftedA < 19683; shiftedA++) {
+		for (int shiftedA = 0; numberOfErrors <= task.numberOfErrors && shiftedA < 19683; shiftedA++) {
 
 			__m256i values0[LIMIT];
 			__m256i values1[LIMIT];
@@ -234,11 +237,12 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 		InterlockedIncrement64(&numberOfIterations);
 
-		if (numberOfErrors < task.numberOfErrors) {
+		BOOL improved = numberOfErrors < task.numberOfErrors ? TRUE : FALSE;
+		if (numberOfErrors <= task.numberOfErrors) {
 
 			InterlockedIncrement64(&numberOfOwnSolutions);
 
-			while (numberOfErrors < ::task.numberOfErrors) {
+			do {
 
 				FILETIME finish;
 				GetSystemTimePreciseAsFileTime(&finish);
@@ -264,11 +268,12 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				}
 				else {
 
-					printf("Managed to find a solution reducing number of errors to %d (%d neurons in %d layers) within %llu ms\n\n", numberOfErrors, numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
+					printf("Managed to find a solution reducing number of errors by %d (%d neurons in %d layers) within %llu ms\n\n", (::task.numberOfErrors - numberOfErrors), numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
 				}
 
 				Sleep(5000);
-			}
+
+			} while (improved && numberOfErrors < ::task.numberOfErrors);
 		}
 	}
 }
