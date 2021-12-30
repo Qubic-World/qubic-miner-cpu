@@ -223,6 +223,9 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				int nextLink0 = links[54][0], nextLink1 = links[54][1], nextLink2 = links[54][2];
 				for (int i = 54; i < currentNeuronIndex; ) {
 
+					//values0[i] = _mm256_ternarylogic_epi32(values0[nextLink0], values0[nextLink1], values0[nextLink2], 0x7F);
+					//values1[i++] = _mm256_ternarylogic_epi32(values1[nextLink0], values1[nextLink1], values1[nextLink2], 0x7F);
+
 					const __m256i tmp00 = _mm256_and_si256(values0[nextLink0], values0[nextLink1]);
 					const __m256i tmp10 = _mm256_and_si256(values1[nextLink0], values1[nextLink1]);
 					const __m256i tmp01 = _mm256_and_si256(tmp00, values0[nextLink2]);
@@ -256,31 +259,41 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 		if (numberOfErrors < task.numberOfErrors) {
 
-			FILETIME finish;
-			GetSystemTimePreciseAsFileTime(&finish);
-			ULARGE_INTEGER s, f;
-			memcpy(&s, &start, sizeof(ULARGE_INTEGER));
-			memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
+			while (numberOfErrors < ::task.numberOfErrors) {
 
-			struct Solution {
+				FILETIME finish;
+				GetSystemTimePreciseAsFileTime(&finish);
+				ULARGE_INTEGER s, f;
+				memcpy(&s, &start, sizeof(ULARGE_INTEGER));
+				memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
 
-				char command;
-				char currentMiner[70];
-				int numberOfErrors;
-				int links[LIMIT][3];
+				struct Solution {
 
-			} solution;
-			solution.command = 1;
-			CopyMemory(solution.currentMiner, miner, 70);
-			solution.numberOfErrors = numberOfErrors;
-			CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
-			if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
+					char command;
+					char currentMiner[70];
+					int numberOfErrors;
+					int links[LIMIT][3];
 
-				printf("Failed to send a solution!\n");
-			}
-			else {
+				} solution;
+				solution.command = 1;
+				CopyMemory(solution.currentMiner, miner, 70);
+				solution.numberOfErrors = numberOfErrors;
+				CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
+				if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
 
-				printf("Managed to find a solution reducing number of errors to %d (%d neurons in %d layers) within %llu ms\n\n", numberOfErrors, numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
+					printf("Failed to send a solution!\n");
+				}
+				else {
+
+					printf("Managed to find a solution reducing number of errors to %d (%d neurons in %d layers) within %llu ms\n\n", numberOfErrors, numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
+				}
+
+				if (lpParameter) {
+
+					break;
+				}
+
+				Sleep(5000);
 			}
 		}
 	}
