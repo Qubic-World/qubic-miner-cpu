@@ -8,6 +8,8 @@
 const long long launchTime = GetTickCount64() - 1;
 volatile long long numberOfIterations = 0, numberOfOwnSolutions = 0, numberOfAllSolutions = -1;
 
+int numberOfChanges = 1;
+
 char miner[70];
 
 volatile struct Task {
@@ -88,54 +90,9 @@ int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int
 
 DWORD WINAPI miningProc(LPVOID lpParameter) {
 
-	if (!lpParameter) {
-
-		Sleep(5000);
-	}
+	Sleep(5000);
 
 	while (TRUE) {
-
-		if (lpParameter) {
-
-			while (TRUE) {
-
-				int prevNumberOfErrors = task.numberOfErrors;
-
-				char getTask[71];
-				getTask[0] = 0;
-				CopyMemory(&getTask[1], miner, 70);
-				if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
-
-					printf("Failed to receive a task!\n");
-
-					Sleep(5000);
-				}
-				else {
-
-					if (prevNumberOfErrors > task.numberOfErrors) {
-
-						InterlockedIncrement64(&numberOfAllSolutions);
-					}
-
-					printf("--- Top 10 miners out of %d:\n", task.numberOfMiners);
-					for (int i = 0; i < 10; i++) {
-
-						printf(" #%2d   *   %.10s...   *   %6d\n", i + 1, task.topMiners[i], task.topMinerScores[i]);
-					}
-					printf("---\n");
-					printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
-					double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
-					printf("Your iteration rate on this hardware is %f iterations/s\n", numberOfIterations / delta);
-					printf("Your solution rate on this hardware is %f solutions/s\n", numberOfOwnSolutions / delta);
-					printf("Pool solution rate is %f solutions/s\n", numberOfAllSolutions / delta);
-					printf("");
-					printf("---\n");
-					printf("There are %d errors left\n\n", task.numberOfErrors);
-
-					break;
-				}
-			}
-		}
 
 		Task task;
 		CopyMemory(&task, (const void*)&::task, sizeof(task));
@@ -143,23 +100,26 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 		FILETIME start;
 		GetSystemTimePreciseAsFileTime(&start);
 
-		unsigned int numberOfSteps;
-		_rdrand32_step(&numberOfSteps);
-		numberOfSteps %= LIMIT;
-		int neuronToChange = LIMIT - 1;
-		unsigned int inputToChange;
-		while (numberOfSteps-- > 0) {
+		for (int change = 0; change < numberOfChanges; change++) {
 
-			_rdrand32_step(&inputToChange);
-			if ((neuronToChange = task.links[neuronToChange][inputToChange % 3]) < 54) {
+			unsigned int numberOfSteps;
+			_rdrand32_step(&numberOfSteps);
+			numberOfSteps %= LIMIT;
+			int neuronToChange = LIMIT - 1;
+			unsigned int inputToChange;
+			while (numberOfSteps-- > 0) {
 
-				neuronToChange = LIMIT - 1;
+				_rdrand32_step(&inputToChange);
+				if ((neuronToChange = task.links[neuronToChange][inputToChange % 3]) < 54) {
+
+					neuronToChange = LIMIT - 1;
+				}
 			}
+			_rdrand32_step(&inputToChange);
+			unsigned int link;
+			_rdrand32_step(&link);
+			task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
 		}
-		_rdrand32_step(&inputToChange);
-		unsigned int link;
-		_rdrand32_step(&link);
-		task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
 
 		int numberOfNeurons = 0;
 		char neuronFlags[LIMIT];
@@ -307,11 +267,6 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					printf("Managed to find a solution reducing number of errors to %d (%d neurons in %d layers) within %llu ms\n\n", numberOfErrors, numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
 				}
 
-				if (lpParameter) {
-
-					break;
-				}
-
 				Sleep(5000);
 			}
 		}
@@ -322,9 +277,14 @@ int main(int argc, char* argv[]) {
 
 	if (argc < 3) {
 
-		printf("qiner.exe <MyIdentity> <NumberOfMiningThreads>\n");
+		printf("qiner.exe <MyIdentity> <NumberOfMiningThreads> <NumberOfChanges>\n");
 
 		return 0;
+	}
+
+	if (argc >= 4) {
+
+		numberOfChanges = atoi(argv[3]);
 	}
 
 	__m256i flags[256];
@@ -394,14 +354,52 @@ int main(int argc, char* argv[]) {
 
 	task.numberOfErrors = 0x7FFFFFFF;
 
-	for (int i = 0; i < atoi(argv[2]) - 1; i++) {
+	for (int i = 0; i < atoi(argv[2]); i++) {
 
 		CreateThread(NULL, 2 * 1024 * 1024, miningProc, NULL, 0, NULL);
 	}
-	CreateThread(NULL, 2 * 1024 * 1024, miningProc, (LPVOID)1, 0, NULL);
 
 	while (TRUE) {
 
-		Sleep(1000);
+		while (TRUE) {
+
+			int prevNumberOfErrors = task.numberOfErrors;
+
+			char getTask[71];
+			getTask[0] = 0;
+			CopyMemory(&getTask[1], miner, 70);
+			if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
+
+				printf("Failed to receive a task!\n");
+
+				Sleep(5000);
+			}
+			else {
+
+				if (prevNumberOfErrors > task.numberOfErrors) {
+
+					InterlockedIncrement64(&numberOfAllSolutions);
+				}
+
+				printf("--- Top 10 miners out of %d:\n", task.numberOfMiners);
+				for (int i = 0; i < 10; i++) {
+
+					printf(" #%2d   *   %.10s...   *   %6d\n", i + 1, task.topMiners[i], task.topMinerScores[i]);
+				}
+				printf("---\n");
+				printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
+				double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
+				printf("Your iteration rate on this hardware is %f iterations/s\n", numberOfIterations / delta);
+				printf("Your solution rate on this hardware is %f solutions/h\n", numberOfOwnSolutions * 3600 / delta);
+				printf("Pool solution rate is %f solutions/h\n", numberOfAllSolutions * 3600 / delta);
+				printf("");
+				printf("---\n");
+				printf("There are %d errors left\n\n", task.numberOfErrors);
+
+				break;
+			}
+		}
+
+		Sleep(5000);
 	}
 }
