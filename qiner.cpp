@@ -5,7 +5,7 @@
 
 #define LIMIT 10000
 
-const long long launchTime = GetTickCount64() - 1;
+const long long launchTime = GetTickCount64() - 1; // Minus one to avoid division by zero on supercomputers
 volatile long long numberOfIterations = 0, numberOfOwnSolutions = 0, numberOfAllSolutions = -1;
 
 int numberOfChanges = 1;
