@@ -6,7 +6,8 @@
 #define LIMIT 10000
 
 const long long launchTime = GetTickCount64() - 1; // Minus one to avoid division by zero on supercomputers
-volatile long long numberOfIterations = 0, numberOfOwnSolutions = 0, numberOfAllSolutions = -1;
+volatile long long numberOfIterations = 0, numberOfOwnErrors = 0;
+long numberOfAllErrors = 0;
 
 int numberOfChanges = 1;
 
@@ -92,8 +93,9 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 	while (task.numberOfErrors == 0x7FFFFFFF) {
 
-		Sleep(100);
+		Sleep(1000);
 	}
+	Sleep(1000);
 
 	while (TRUE) {
 
@@ -125,6 +127,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 		}
 
 		int numberOfNeurons = 0;
+
 		char neuronFlags[LIMIT];
 
 		for (int i = 54; i < LIMIT - 1; i++) {
@@ -163,77 +166,46 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			}
 		}
 
-		int neuronLayers[LIMIT];
-		for (int i = 0; i < 54; i++) {
-
-			neuronLayers[i] = 0;
-		}
-		for (int i = 54; i < currentNeuronIndex; i++) {
-
-			neuronLayers[i] = neuronLayers[links[i][0]];
-			if (neuronLayers[links[i][1]] > neuronLayers[i]) {
-
-				neuronLayers[i] = neuronLayers[links[i][1]];
-			}
-			if (neuronLayers[links[i][2]] > neuronLayers[i]) {
-
-				neuronLayers[i] = neuronLayers[links[i][2]];
-			}
-			neuronLayers[i]++;
-		}
-		int numberOfLayers = neuronLayers[currentNeuronIndex - 1];
-
 		int numberOfErrors = 0;
 
-		//const long long xxx = __rdtsc();
-
-		for (int shiftedA = 0; numberOfErrors <= task.numberOfErrors && shiftedA < 19683; shiftedA++) {
+		for (int shiftedA = 0; numberOfErrors <= task.numberOfErrors && shiftedA < 19683; shiftedA += 3) {
 
 			__m256i values0[LIMIT];
 			__m256i values1[LIMIT];
+			__m256i values2[LIMIT];
 
 			memcpy(&values0[0], &aWords[shiftedA], sizeof(__m256i) * 27);
-			memcpy(&values1[0], &aWords[shiftedA], sizeof(__m256i) * 27);
+			memcpy(&values1[0], &aWords[shiftedA + 1], sizeof(__m256i) * 27);
+			memcpy(&values2[0], &aWords[shiftedA + 2], sizeof(__m256i) * 27);
 
-			for (int bChunkIndex = 0; bChunkIndex < (19683 + 255) / 256 - 1; ) {
+			for (int bChunkIndex = 0; bChunkIndex < (19683 + 255) / 256; bChunkIndex++) {
 
 				memcpy(&values0[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
-				memcpy(&values1[27], &bWords[bChunkIndex + 1], sizeof(__m256i) * 27);
+				memcpy(&values1[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
+				memcpy(&values2[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
 
-				for (int i = 54; i < currentNeuronIndex; ) {
-
-					//values0[i] = _mm256_ternarylogic_epi32(values0[links[i][0]], values0[links[i][1]], values0[links[i][2]], 0x7F);
-					//values1[i++] = _mm256_ternarylogic_epi32(values1[links[i][0]], values1[links[i][1]], values1[links[i][2]], 0x7F);
+				for (int i = 54; i < currentNeuronIndex; i++) {
 
 					const __m256i tmp00 = _mm256_and_si256(values0[links[i][0]], values0[links[i][1]]);
 					const __m256i tmp10 = _mm256_and_si256(values1[links[i][0]], values1[links[i][1]]);
+					const __m256i tmp20 = _mm256_and_si256(values2[links[i][0]], values2[links[i][1]]);
 					const __m256i tmp01 = _mm256_and_si256(tmp00, values0[links[i][2]]);
 					const __m256i tmp11 = _mm256_and_si256(tmp10, values1[links[i][2]]);
+					const __m256i tmp21 = _mm256_and_si256(tmp20, values2[links[i][2]]);
 					values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
-					values1[i++] = _mm256_xor_si256(tmp11, _mm256_cmpeq_epi32(tmp11, tmp11));
+					values1[i] = _mm256_xor_si256(tmp11, _mm256_cmpeq_epi32(tmp11, tmp11));
+					values2[i] = _mm256_xor_si256(tmp21, _mm256_cmpeq_epi32(tmp21, tmp21));
 				}
 
-				long differences0[4], differences1[4];
-				_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
-				_mm256_storeu_si256((__m256i*) differences1, _mm256_xor_si256(values1[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex++]));
+				long differences0[4], differences1[4], differences2[4];
+				_mm256_storeu_si256((__m256i*)differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex]));
+				_mm256_storeu_si256((__m256i*)differences1, _mm256_xor_si256(values1[currentNeuronIndex - 1], cWords[shiftedA + 1][bChunkIndex]));
+				_mm256_storeu_si256((__m256i*)differences2, _mm256_xor_si256(values2[currentNeuronIndex - 1], cWords[shiftedA + 2][bChunkIndex]));
 				numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
-					+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3]));
+					+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
+					+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3]));
 			}
-
-			memcpy(&values0[27], &bWords[(19683 + 255) / 256 - 1], sizeof(__m256i) * 27);
-
-			for (int i = 54; i < currentNeuronIndex; i++) {
-
-				const __m256i tmp01 = _mm256_and_si256(_mm256_and_si256(values0[links[i][0]], values0[links[i][1]]), values0[links[i][2]]);
-				values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
-			}
-
-			long differences0[4];
-			_mm256_storeu_si256((__m256i*) differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][(19683 + 255) / 256 - 1]));
-			numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3]));
 		}
-
-		//printf("%llu!\n", __rdtsc() - xxx);
 
 		InterlockedIncrement64(&numberOfIterations);
 
@@ -242,7 +214,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 			if (numberOfErrors < task.numberOfErrors) {
 
-				InterlockedIncrement64(&numberOfOwnSolutions);
+				InterlockedAdd64(&numberOfOwnErrors, task.numberOfErrors - numberOfErrors);
 			}
 
 			do {
@@ -276,7 +248,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 					if (numberOfErrors < task.numberOfErrors) {
 
-						printf("Managed to find a solution reducing number of errors by %d (%d neurons in %d layers) within %llu ms\n\n", (task.numberOfErrors - numberOfErrors), numberOfNeurons, numberOfLayers, (f.QuadPart - s.QuadPart) / 10000);
+						printf("Managed to find a solution reducing number of errors by %d (%d neurons) within %llu ms\n\n", (task.numberOfErrors - numberOfErrors), numberOfNeurons, (f.QuadPart - s.QuadPart) / 10000);
 					}
 				}
 
@@ -390,12 +362,12 @@ int main(int argc, char* argv[]) {
 			}
 			else {
 
-				if (prevNumberOfErrors > task.numberOfErrors) {
+				if (prevNumberOfErrors > task.numberOfErrors && prevNumberOfErrors != 0x7FFFFFFF) {
 
-					InterlockedIncrement64(&numberOfAllSolutions);
+					numberOfAllErrors += prevNumberOfErrors - task.numberOfErrors;
 				}
 
-				printf("--- Top 10 miners out of %d:\n", task.numberOfMiners);
+				printf("--- Top 10 miners out of %d:            [v0.0.1]\n", task.numberOfMiners);
 				for (int i = 0; i < 10; i++) {
 
 					printf(" #%2d   *   %.10s...   *   %6d\n", i + 1, task.topMiners[i], task.topMinerScores[i]);
@@ -404,8 +376,8 @@ int main(int argc, char* argv[]) {
 				printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
 				double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
 				printf("Your iteration rate on this hardware is %f iterations/s\n", numberOfIterations / delta);
-				printf("Your solution rate on this hardware is %f solutions/h\n", numberOfOwnSolutions * 3600 / delta);
-				printf("Pool solution rate is %f solutions/h\n", numberOfAllSolutions * 3600 / delta);
+				printf("Your error elimination rate on this hardware is %f errors/h\n", numberOfOwnErrors * 3600 / delta);
+				printf("Pool error elimination rate is %f errors/h\n", numberOfAllErrors * 3600 / delta);
 				printf("");
 				printf("---\n");
 				printf("There are %d errors left\n\n", task.numberOfErrors);
