@@ -7,7 +7,7 @@
 
 const long long launchTime = GetTickCount64() - 1; // Minus one to avoid division by zero on supercomputers
 volatile long long numberOfIterations = 0, numberOfOwnErrors = 0;
-long numberOfAllErrors = 0;
+int numberOfAllErrors = 0;
 
 int numberOfChanges = 1;
 
@@ -25,9 +25,9 @@ volatile struct Task {
 
 } task;
 
-__m256i aWords[19683][27];
-__m256i bWords[(19683 + 255) / 256][27];
-__m256i cWords[19683][(19683 + 255) / 256];
+__m256i diffMask = _mm256_setzero_si256();
+
+auto inputOutputs = new __m256i[19683 * 19683 / 243][27 + 27 + 1];
 
 int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int receivedDataBufferSize) {
 
@@ -168,43 +168,36 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 		int numberOfErrors = 0;
 
-		for (int shiftedA = 0; numberOfErrors <= task.numberOfErrors && shiftedA < 19683; shiftedA += 3) {
+		for (int inputOutputIndex = 0; numberOfErrors <= task.numberOfErrors && inputOutputIndex < 19683 * 19683 / 243; inputOutputIndex += 3) {
 
 			__m256i values0[LIMIT];
 			__m256i values1[LIMIT];
 			__m256i values2[LIMIT];
 
-			memcpy(&values0[0], &aWords[shiftedA], sizeof(__m256i) * 27);
-			memcpy(&values1[0], &aWords[shiftedA + 1], sizeof(__m256i) * 27);
-			memcpy(&values2[0], &aWords[shiftedA + 2], sizeof(__m256i) * 27);
+			memcpy(&values0[0], &inputOutputs[inputOutputIndex], sizeof(__m256i) * (27 + 27));
+			memcpy(&values1[0], &inputOutputs[inputOutputIndex + 1], sizeof(__m256i) * (27 + 27));
+			memcpy(&values2[0], &inputOutputs[inputOutputIndex + 2], sizeof(__m256i) * (27 + 27));
 
-			for (int bChunkIndex = 0; bChunkIndex < (19683 + 255) / 256; bChunkIndex++) {
+			for (int i = 54; i < currentNeuronIndex; i++) {
 
-				memcpy(&values0[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
-				memcpy(&values1[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
-				memcpy(&values2[27], &bWords[bChunkIndex], sizeof(__m256i) * 27);
-
-				for (int i = 54; i < currentNeuronIndex; i++) {
-
-					const __m256i tmp00 = _mm256_and_si256(values0[links[i][0]], values0[links[i][1]]);
-					const __m256i tmp10 = _mm256_and_si256(values1[links[i][0]], values1[links[i][1]]);
-					const __m256i tmp20 = _mm256_and_si256(values2[links[i][0]], values2[links[i][1]]);
-					const __m256i tmp01 = _mm256_and_si256(tmp00, values0[links[i][2]]);
-					const __m256i tmp11 = _mm256_and_si256(tmp10, values1[links[i][2]]);
-					const __m256i tmp21 = _mm256_and_si256(tmp20, values2[links[i][2]]);
-					values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
-					values1[i] = _mm256_xor_si256(tmp11, _mm256_cmpeq_epi32(tmp11, tmp11));
-					values2[i] = _mm256_xor_si256(tmp21, _mm256_cmpeq_epi32(tmp21, tmp21));
-				}
-
-				long differences0[4], differences1[4], differences2[4];
-				_mm256_storeu_si256((__m256i*)differences0, _mm256_xor_si256(values0[currentNeuronIndex - 1], cWords[shiftedA][bChunkIndex]));
-				_mm256_storeu_si256((__m256i*)differences1, _mm256_xor_si256(values1[currentNeuronIndex - 1], cWords[shiftedA + 1][bChunkIndex]));
-				_mm256_storeu_si256((__m256i*)differences2, _mm256_xor_si256(values2[currentNeuronIndex - 1], cWords[shiftedA + 2][bChunkIndex]));
-				numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
-					+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
-					+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3]));
+				const __m256i tmp00 = _mm256_and_si256(values0[links[i][0]], values0[links[i][1]]);
+				const __m256i tmp10 = _mm256_and_si256(values1[links[i][0]], values1[links[i][1]]);
+				const __m256i tmp20 = _mm256_and_si256(values2[links[i][0]], values2[links[i][1]]);
+				const __m256i tmp01 = _mm256_and_si256(tmp00, values0[links[i][2]]);
+				const __m256i tmp11 = _mm256_and_si256(tmp10, values1[links[i][2]]);
+				const __m256i tmp21 = _mm256_and_si256(tmp20, values2[links[i][2]]);
+				values0[i] = _mm256_xor_si256(tmp01, _mm256_cmpeq_epi32(tmp01, tmp01));
+				values1[i] = _mm256_xor_si256(tmp11, _mm256_cmpeq_epi32(tmp11, tmp11));
+				values2[i] = _mm256_xor_si256(tmp21, _mm256_cmpeq_epi32(tmp21, tmp21));
 			}
+
+			long long differences0[4], differences1[4], differences2[4];
+			_mm256_storeu_si256((__m256i*)differences0, _mm256_xor_si256(_mm256_and_si256(values0[currentNeuronIndex - 1], diffMask), inputOutputs[inputOutputIndex][27 + 27]));
+			_mm256_storeu_si256((__m256i*)differences1, _mm256_xor_si256(_mm256_and_si256(values1[currentNeuronIndex - 1], diffMask), inputOutputs[inputOutputIndex + 1][27 + 27]));
+			_mm256_storeu_si256((__m256i*)differences2, _mm256_xor_si256(_mm256_and_si256(values2[currentNeuronIndex - 1], diffMask), inputOutputs[inputOutputIndex + 2][27 + 27]));
+			numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
+				+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
+				+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3]));
 		}
 
 		InterlockedIncrement64(&numberOfIterations);
@@ -273,7 +266,7 @@ int main(int argc, char* argv[]) {
 		numberOfChanges = atoi(argv[3]);
 	}
 
-	__m256i flags[256];
+	__m256i flags[243];
 
 	int i = 0;
 	for (int j = 0; j < 8; j++) {
@@ -282,52 +275,52 @@ int main(int argc, char* argv[]) {
 
 		for (fragments[j] = 1; fragments[j] != 0; fragments[j] <<= 1) {
 
-			flags[i++] = _mm256_set_epi32(fragments[7], fragments[6], fragments[5], fragments[4], fragments[3], fragments[2], fragments[1], fragments[0]);
+			flags[i] = _mm256_set_epi32(fragments[7], fragments[6], fragments[5], fragments[4], fragments[3], fragments[2], fragments[1], fragments[0]);
+			diffMask = _mm256_or_si256(diffMask, flags[i]);
+			
+			if (++i == 243) {
+
+				break;
+			}
 		}
 	}
 
-	for (int a = -9841; a <= 9841; a++) {
+	int a = 0, b = 0;
+	for (int inputOutputIndex = 0; inputOutputIndex < 19683 * 19683 / 243; inputOutputIndex++) {
 
-		int absoluteValue = a < 0 ? -a : a;
-		for (int i = 0; i < 9; i++) {
+		for (int i = 0; i < 27 + 27 + 1; i++) {
 
-			int remainder = absoluteValue % 3;
-			absoluteValue = (absoluteValue + 1) / 3;
-			aWords[a + 9841][i * 3] = _mm256_setzero_si256();
-			aWords[a + 9841][i * 3 + 1] = _mm256_setzero_si256();
-			aWords[a + 9841][i * 3 + 2] = _mm256_setzero_si256();
-			aWords[a + 9841][((a < 0 && remainder != 0) ? (remainder ^ 3) : remainder) + i * 3] = _mm256_cmpeq_epi32(aWords[a + 9841][i * 3], aWords[a + 9841][i * 3]);
+			inputOutputs[inputOutputIndex][i] = _mm256_setzero_si256();
 		}
 
-		int b = -9841 - 1;
-		for (int counter = 0; counter < (19683 + 255) / 256; counter++) {
+		for (int i = 0; i < 243; i++) {
 
-			for (int i = 0; i < 27; i++) {
+			int c = (b == 0 ? 0 : a / b);
 
-				bWords[counter][i] = _mm256_setzero_si256();
+			int absoluteValueA = a < 0 ? -a : a;
+			int absoluteValueB = b < 0 ? -b : b;
+			int absoluteValueC = c < 0 ? -c : c;
+			for (int j = 0; j < 9; j++) {
+
+				int remainderA = absoluteValueA % 3;
+				int remainderB = absoluteValueB % 3;
+				absoluteValueA = (absoluteValueA + 1) / 3;
+				absoluteValueB = (absoluteValueB + 1) / 3;
+				inputOutputs[inputOutputIndex][((a < 0 && remainderA != 0) ? (remainderA ^ 3) : remainderA) + j * 3] = _mm256_or_si256(inputOutputs[inputOutputIndex][((a < 0 && remainderA != 0) ? (remainderA ^ 3) : remainderA) + j * 3], flags[i]);
+				inputOutputs[inputOutputIndex][27 + ((b < 0 && remainderB != 0) ? (remainderB ^ 3) : remainderB) + j * 3] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + ((b < 0 && remainderB != 0) ? (remainderB ^ 3) : remainderB) + j * 3], flags[i]);
 			}
-			cWords[a + 9841][counter] = _mm256_setzero_si256();
+			if (absoluteValueC % 3 == 0) {
 
-			for (int f = 0; f < 256; f++) {
+				inputOutputs[inputOutputIndex][27 + 27] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + 27], flags[i]);
+			}
 
-				if (++b > 9841) {
+			if (++b > 9841) {
 
-					b = -9841;
-				}
+				b = -9841;
 
-				int c = (b == 0 ? 0 : a / b);
+				if (++a > 9841) {
 
-				int absoluteValueB = b < 0 ? -b : b;
-				int absoluteValueC = c < 0 ? -c : c;
-				for (int i = 0; i < 9; i++) {
-
-					int remainderB = absoluteValueB % 3;
-					absoluteValueB = (absoluteValueB + 1) / 3;
-					bWords[counter][((b < 0 && remainderB != 0) ? (remainderB ^ 3) : remainderB) + i * 3] = _mm256_or_si256(bWords[counter][((b < 0 && remainderB != 0) ? (remainderB ^ 3) : remainderB) + i * 3], flags[f]);
-				}
-				if (absoluteValueC % 3 == 0) {
-
-					cWords[a + 9841][counter] = _mm256_or_si256(cWords[a + 9841][counter], flags[f]);
+					a = -9841;
 				}
 			}
 		}
@@ -367,15 +360,15 @@ int main(int argc, char* argv[]) {
 					numberOfAllErrors += prevNumberOfErrors - task.numberOfErrors;
 				}
 
-				printf("--- Top 10 miners out of %d:            [v0.0.1]\n", task.numberOfMiners);
+				printf("--- Top 10 miners out of %d:            [v0.1.0]\n", task.numberOfMiners);
 				for (int i = 0; i < 10; i++) {
 
-					printf(" #%2d   *   %.10s...   *   %6d\n", i + 1, task.topMiners[i], task.topMinerScores[i]);
+					printf(" #%2d   *   %.10s...   *   %8d\n", i + 1, task.topMiners[i], task.topMinerScores[i]);
 				}
 				printf("---\n");
 				printf("You are #%d with %d found solutions\n", task.currentMinerPlace, task.currentMinerScore);
 				double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
-				printf("Your iteration rate on this hardware is %f iterations/s\n", numberOfIterations / delta);
+				printf("Your iteration rate on this hardware is %f iterations/s (%d changes)\n", numberOfIterations / delta, numberOfChanges);
 				printf("Your error elimination rate on this hardware is %f errors/h\n", numberOfOwnErrors * 3600 / delta);
 				printf("Pool error elimination rate is %f errors/h\n", numberOfAllErrors * 3600 / delta);
 				printf("");
