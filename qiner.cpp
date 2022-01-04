@@ -29,7 +29,9 @@ volatile struct Task {
 
 __m256i diffMask = _mm256_setzero_si256();
 
-auto inputOutputs = new __m256i[19683 * 19683 / 243 / 3][27 + (27 + 27 + 27) + (1 + 1 + 1)];
+__m256i aWords[19683][27];
+__m256i bWords[19683 / 243 / 3][27][3];
+__m256i cWords[19683][19683 / 243 / 3][3];
 
 int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int receivedDataBufferSize) {
 
@@ -176,43 +178,43 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 		int numberOfErrors = 0;
 
 		__m256i values[LIMIT][3];
-		for (int inputOutputIndex = 0; numberOfErrors <= task.numberOfErrors && inputOutputIndex < 19683 * 19683 / 243 / 3; inputOutputIndex++) {
+		for (int a = 0; numberOfErrors <= task.numberOfErrors && a < 19683; a++) {
 
 			for (int i = 0; i < 27; i++) {
 
-				values[i][2] = values[i][1] = values[i][0] = inputOutputs[inputOutputIndex][i];
-			}
-			for (int i = 0; i < 27; i++) {
-
-				values[27 + i][0] = inputOutputs[inputOutputIndex][27 + i * 3];
-				values[27 + i][1] = inputOutputs[inputOutputIndex][27 + i * 3 + 1];
-				values[27 + i][2] = inputOutputs[inputOutputIndex][27 + i * 3 + 2];
+				values[i][2] = values[i][1] = values[i][0] = aWords[a][i];
 			}
 
-			for (int i = 54; i < currentNeuronIndex; i++) {
+			for (int b = 0; b < 19683 / 243 / 3; b++) {
 
-				//values[i][0] = _mm256_ternarylogic_epi32(values[links[i][0]][0], values[links[i][1]][0], values[links[i][2]][0], 0x7F);
-				//values[i][1] = _mm256_ternarylogic_epi32(values[links[i][0]][1], values[links[i][1]][1], values[links[i][2]][1], 0x7F);
-				//values[i][2] = _mm256_ternarylogic_epi32(values[links[i][0]][2], values[links[i][1]][2], values[links[i][2]][2], 0x7F);
+				for (int i = 0; i < 27; i++) {
 
-				const __m256i tmp00 = _mm256_and_si256(values[links[i][0]][0], values[links[i][1]][0]);
-				const __m256i tmp10 = _mm256_and_si256(values[links[i][0]][1], values[links[i][1]][1]);
-				const __m256i tmp20 = _mm256_and_si256(values[links[i][0]][2], values[links[i][1]][2]);
-				const __m256i tmp01 = _mm256_and_si256(tmp00, values[links[i][2]][0]);
-				const __m256i tmp11 = _mm256_and_si256(tmp10, values[links[i][2]][1]);
-				const __m256i tmp21 = _mm256_and_si256(tmp20, values[links[i][2]][2]);
-				values[i][0] = _mm256_xor_si256(tmp01, allOnes);
-				values[i][1] = _mm256_xor_si256(tmp11, allOnes);
-				values[i][2] = _mm256_xor_si256(tmp21, allOnes);
+					values[27 + i][0] = bWords[b][i][0];
+					values[27 + i][1] = bWords[b][i][1];
+					values[27 + i][2] = bWords[b][i][2];
+				}
+
+				for (int i = 54; i < currentNeuronIndex; i++) {
+
+					const __m256i tmp00 = _mm256_and_si256(values[links[i][0]][0], values[links[i][1]][0]);
+					const __m256i tmp10 = _mm256_and_si256(values[links[i][0]][1], values[links[i][1]][1]);
+					const __m256i tmp20 = _mm256_and_si256(values[links[i][0]][2], values[links[i][1]][2]);
+					const __m256i tmp01 = _mm256_and_si256(tmp00, values[links[i][2]][0]);
+					const __m256i tmp11 = _mm256_and_si256(tmp10, values[links[i][2]][1]);
+					const __m256i tmp21 = _mm256_and_si256(tmp20, values[links[i][2]][2]);
+					values[i][0] = _mm256_xor_si256(tmp01, allOnes);
+					values[i][1] = _mm256_xor_si256(tmp11, allOnes);
+					values[i][2] = _mm256_xor_si256(tmp21, allOnes);
+				}
+
+				long long differences0[4], differences1[4], differences2[4];
+				*((__m256i*)differences0) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][0], diffMask), cWords[a][b][0]);
+				*((__m256i*)differences1) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][1], diffMask), cWords[a][b][1]);
+				*((__m256i*)differences2) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][2], diffMask), cWords[a][b][2]);
+				numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
+					+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
+					+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3]));
 			}
-
-			long long differences0[4], differences1[4], differences2[4];
-			_mm256_storeu_si256((__m256i*)differences0, _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][0], diffMask), inputOutputs[inputOutputIndex][27 + (27 + 27 + 27)]));
-			_mm256_storeu_si256((__m256i*)differences1, _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][1], diffMask), inputOutputs[inputOutputIndex][27 + (27 + 27 + 27) + 1]));
-			_mm256_storeu_si256((__m256i*)differences2, _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][2], diffMask), inputOutputs[inputOutputIndex][27 + (27 + 27 + 27) + 1 + 1]));
-			numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
-				+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
-				+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3]));
 		}
 
 		InterlockedIncrement64(&numberOfIterations);
@@ -304,59 +306,70 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
-	int a = -9841, b = -9841;
-	ZeroMemory(inputOutputs, sizeof(inputOutputs));
-	for (int inputOutputIndex = 0; inputOutputIndex < 19683 * 19683 / 243 / 3; inputOutputIndex++) {
+	ZeroMemory(aWords, sizeof(aWords));
+	ZeroMemory(bWords, sizeof(bWords));
+	ZeroMemory(cWords, sizeof(cWords));
+
+	for (int a = -9841; a <= 9841; a++) {
+
+		int absoluteValueA = a < 0 ? -a : a;
+		for (int i = 0; i < 9; i++) {
+
+			int remainderA = absoluteValueA % 3;
+			absoluteValueA = (absoluteValueA + 1) / 3;
+			aWords[a + 9841][i * 3 + ((a < 0 && remainderA != 0) ? (remainderA ^ 3) : remainderA)] = allOnes;
+		}
+	}
+
+	for (int b = -9841; b <= 9841; ) {
 
 		for (int i = 0; i < 243; i++) {
 
-			int c0 = (b == 0 ? 0 : a / b);
-			int c1 = ((b + 1) == 0 ? 0 : a / (b + 1));
-			int c2 = ((b + 2) == 0 ? 0 : a / (b + 2));
-
-			int absoluteValueA = a < 0 ? -a : a;
 			int absoluteValueB0 = b < 0 ? -b : b;
 			int absoluteValueB1 = (b + 1) < 0 ? -(b + 1) : (b + 1);
 			int absoluteValueB2 = (b + 2) < 0 ? -(b + 2) : (b + 2);
-			int absoluteValueC0 = c0 < 0 ? -c0 : c0;
-			int absoluteValueC1 = c1 < 0 ? -c1 : c1;
-			int absoluteValueC2 = c2 < 0 ? -c2 : c2;
 			for (int j = 0; j < 9; j++) {
 
-				int remainderA = absoluteValueA % 3;
 				int remainderB0 = absoluteValueB0 % 3;
 				int remainderB1 = absoluteValueB1 % 3;
 				int remainderB2 = absoluteValueB2 % 3;
-				absoluteValueA = (absoluteValueA + 1) / 3;
 				absoluteValueB0 = (absoluteValueB0 + 1) / 3;
 				absoluteValueB1 = (absoluteValueB1 + 1) / 3;
 				absoluteValueB2 = (absoluteValueB2 + 1) / 3;
-				inputOutputs[inputOutputIndex][((a < 0 && remainderA != 0) ? (remainderA ^ 3) : remainderA) + j * 3] = _mm256_or_si256(inputOutputs[inputOutputIndex][((a < 0 && remainderA != 0) ? (remainderA ^ 3) : remainderA) + j * 3], flags[i]);
-				inputOutputs[inputOutputIndex][27 + (((b < 0 && remainderB0 != 0) ? (remainderB0 ^ 3) : remainderB0) + j * 3) * 3] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + (((b < 0 && remainderB0 != 0) ? (remainderB0 ^ 3) : remainderB0) + j * 3) * 3], flags[i]);
-				inputOutputs[inputOutputIndex][27 + ((((b + 1) < 0 && remainderB1 != 0) ? (remainderB1 ^ 3) : remainderB1) + j * 3) * 3 + 1] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + ((((b + 1) < 0 && remainderB1 != 0) ? (remainderB1 ^ 3) : remainderB1) + j * 3) * 3 + 1], flags[i]);
-				inputOutputs[inputOutputIndex][27 + ((((b + 2) < 0 && remainderB2 != 0) ? (remainderB2 ^ 3) : remainderB2) + j * 3) * 3 + 2] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + ((((b + 2) < 0 && remainderB2 != 0) ? (remainderB2 ^ 3) : remainderB2) + j * 3) * 3 + 2], flags[i]);
-			}
-			if (absoluteValueC0 % 3 == 0) {
-
-				inputOutputs[inputOutputIndex][27 + (27 + 27 + 27)] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + (27 + 27 + 27)], flags[i]);
-			}
-			if (absoluteValueC1 % 3 == 0) {
-
-				inputOutputs[inputOutputIndex][27 + (27 + 27 + 27) + 1] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + (27 + 27 + 27) + 1], flags[i]);
-			}
-			if (absoluteValueC2 % 3 == 0) {
-
-				inputOutputs[inputOutputIndex][27 + (27 + 27 + 27) + 1 + 1] = _mm256_or_si256(inputOutputs[inputOutputIndex][27 + (27 + 27 + 27) + 1 + 1], flags[i]);
+				bWords[(b + 9841) / 243 / 3][j * 3 + ((b < 0 && remainderB0 != 0) ? (remainderB0 ^ 3) : remainderB0)][0] = _mm256_or_si256(bWords[(b + 9841) / 243 / 3][j * 3 + ((b < 0 && remainderB0 != 0) ? (remainderB0 ^ 3) : remainderB0)][0], flags[i]);
+				bWords[((b + 1) + 9841) / 243 / 3][j * 3 + (((b + 1) < 0 && remainderB1 != 0) ? (remainderB1 ^ 3) : remainderB1)][1] = _mm256_or_si256(bWords[((b + 1) + 9841) / 243 / 3][j * 3 + (((b + 1) < 0 && remainderB1 != 0) ? (remainderB1 ^ 3) : remainderB1)][1], flags[i]);
+				bWords[((b + 2) + 9841) / 243 / 3][j * 3 + (((b + 2) < 0 && remainderB2 != 0) ? (remainderB2 ^ 3) : remainderB2)][2] = _mm256_or_si256(bWords[((b + 2) + 9841) / 243 / 3][j * 3 + (((b + 2) < 0 && remainderB2 != 0) ? (remainderB2 ^ 3) : remainderB2)][2], flags[i]);
 			}
 
 			b += 3;
 		}
+	}
 
-		if (b > 9841) {
+	for (int a = -9841; a <= 9841; a++) {
 
-			b = -9841;
+		for (int b = -9841; b <= 9841; ) {
 
-			a++;
+			for (int i = 0; i < 243; i++) {
+
+				const int c0 = (b == 0 ? 0 : a / b);
+				const int c1 = ((b + 1) == 0 ? 0 : a / (b + 1));
+				const int c2 = ((b + 2) == 0 ? 0 : a / (b + 2));
+
+				if ((c0 < 0 ? -c0 : c0) % 3 == 0) {
+
+					cWords[a + 9841][(b + 9841) / 243 / 3][0] = _mm256_or_si256(cWords[a + 9841][(b + 9841) / 243 / 3][0], flags[i]);
+				}
+				if ((c1 < 0 ? -c1 : c1) % 3 == 0) {
+
+					cWords[a + 9841][((b + 1) + 9841) / 243 / 3][1] = _mm256_or_si256(cWords[a + 9841][((b + 1) + 9841) / 243 / 3][1], flags[i]);
+				}
+				if ((c2 < 0 ? -c2 : c2) % 3 == 0) {
+
+					cWords[a + 9841][((b + 2) + 9841) / 243 / 3][2] = _mm256_or_si256(cWords[a + 9841][((b + 2) + 9841) / 243 / 3][2], flags[i]);
+				}
+
+				b += 3;
+			}
 		}
 	}
 
@@ -405,7 +418,7 @@ int main(int argc, char* argv[]) {
 					}
 				}
 
-				printf("--- Top 10 miners out of %d:            [v0.1.3]\n", task.numberOfMiners);
+				printf("--- Top 10 miners out of %d:            [v0.1.6]\n", task.numberOfMiners);
 				for (int i = 0; i < 10; i++) {
 
 					printf(" #%2d   *   %.10s...   *   %8d", i + 1, task.topMiners[i], task.topMinerScores[i]);
