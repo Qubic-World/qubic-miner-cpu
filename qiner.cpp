@@ -346,9 +346,16 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			}
 		}
 
-		if (lpParameter && numberOfNeurons < prevNumberOfNeurons) {
+		if ((lpParameter && numberOfNeurons < prevNumberOfNeurons) || (!lpParameter && numberOfNeurons > prevNumberOfNeurons)) {
 
-			InterlockedIncrement64(&numberOfXIterations);
+			if (lpParameter) {
+
+				InterlockedIncrement64(&numberOfXIterations);
+			}
+			else {
+
+				InterlockedIncrement64(&numberOfIterations);
+			}
 		}
 		else {
 
@@ -581,9 +588,16 @@ DWORD WINAPI miningProcAVX512(LPVOID lpParameter) {
 			}
 		}
 
-		if (lpParameter && numberOfNeurons < prevNumberOfNeurons) {
+		if ((lpParameter && numberOfNeurons < prevNumberOfNeurons) || (!lpParameter && numberOfNeurons > prevNumberOfNeurons)) {
 
-			InterlockedIncrement64(&numberOfXIterations);
+			if (lpParameter) {
+
+				InterlockedIncrement64(&numberOfXIterations);
+			}
+			else {
+
+				InterlockedIncrement64(&numberOfIterations);
+			}
 		}
 		else {
 
@@ -780,7 +794,7 @@ int main(int argc, char* argv[]) {
 
 	if (argc < 2) {
 
-		printf("qiner.exe <MyIdentity> <NumberOfClassicalThreads> <NumberOfExperimentalThreads>\n");
+		printf("qiner.exe <MyIdentity> <NumberOfDeflatingThreads> <NumberOfInflatingThreads>\n");
 
 		return 0;
 	}
@@ -880,7 +894,7 @@ int main(int argc, char* argv[]) {
 	SYSTEM_INFO systemInfo;
 	GetNativeSystemInfo(&systemInfo);
 
-	int numberOfThreads = (argc >= 3) ? atoi(argv[2]) : systemInfo.dwNumberOfProcessors;
+	int numberOfThreads = (argc >= 3) ? atoi(argv[2]) : 0;
 	int numberOfXThreads = (argc >= 4) ? atoi(argv[3]) : 0;
 
 	for (int i = 0; i < numberOfThreads; i++) {
@@ -954,7 +968,7 @@ int main(int argc, char* argv[]) {
 
 				char buffer[12];
 
-				printf("\n--- Top 10 miners out of %d:                 [v0.3.1]\n", task.numberOfMiners);
+				printf("\n--- Top 10 miners out of %d:                 [v0.3.2]\n", task.numberOfMiners);
 				for (int i = 0; i < 10; i++) {
 
 					printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
@@ -1008,11 +1022,11 @@ int main(int argc, char* argv[]) {
 				CopyMemory(&performanceTimestamps[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1], &currentTimestamp, sizeof(performanceTimestamps[0]));
 				performanceCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfIterations;
 				performanceXCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfXIterations;
-				printf("Your iteration rate is %.3f (classical) + %.3f (experimental) = %.3f iterations/s ([%d+%d]/%d threads, %d changes)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), totalNumberOfXIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), (totalNumberOfIterations + totalNumberOfXIterations) * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, numberOfXThreads, systemInfo.dwNumberOfProcessors, numberOfChanges);
+				printf("Your iteration rate is %.3f (deflation) + %.3f (inflation) = %.3f iterations/s ([%d+%d]/%d threads, %d changes)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), totalNumberOfXIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), (totalNumberOfIterations + totalNumberOfXIterations) * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, numberOfXThreads, systemInfo.dwNumberOfProcessors, numberOfChanges);
 
 				double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
-				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations) @ Classical\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
-				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations) @ Experimental\n", numberOfOwnXErrors * 3600 / delta, number(numberOf0XElimitations, buffer));
+				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations) @ Deflation\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
+				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations) @ Inflation\n", numberOfOwnXErrors * 3600 / delta, number(numberOf0XElimitations, buffer));
 				printf("Pool error elimination rate is ~%.3f errors/h\n", numberOfAllErrors * 3600 / delta);
 				printf("");
 				printf("---\n");
