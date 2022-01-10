@@ -13,12 +13,11 @@
 __declspec(align(32)) const __m256i allOnes = _mm256_set1_epi32(0xFFFFFFFF);
 
 long long launchTime = GetTickCount64() - 1;
-volatile long long numberOfIterations, numberOfXIterations, numberOfOwnErrors = 0, numberOfOwnXErrors = 0, numberOf0Elimitations = 0, numberOf0XElimitations = 0;
+volatile long long numberOfIterations, numberOfOwnErrors = 0, numberOf0Elimitations = 0;
 long long numberOfAllErrors = 0;
 
 FILETIME performanceTimestamps[12];
 long long performanceCounters[12];
-long long performanceXCounters[12];
 
 int numberOfChanges = 1;
 
@@ -36,11 +35,21 @@ volatile struct Task {
 
 } task, prevTask, prevPrevTask;
 
+int links[LIMIT][3];
+
 __declspec(align(32)) __m256i diffMask = _mm256_setzero_si256();
 
 __declspec(align(32)) __m256i aWords[19683][27];
 __declspec(align(32)) __m256i bWords[19683 / 243 / 3][27][3];
 __declspec(align(32)) __m256i cWords[19683][19683 / 243 / 3][3];
+
+int numberOfThreads;
+long long latestTaskTime = 0, latestSolutionTime;
+
+CRITICAL_SECTION critSect;
+volatile long long nextSubtask = 0, numberOfCompletedSubtasks = 0;
+volatile long long totalNumberOfErrors;
+volatile int prevNumberOfNeurons, numberOfNeurons, currentNeuronIndex;
 
 class InstructionSet
 {
@@ -256,484 +265,6 @@ int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int
 	return totalNumberOfReceivedBytes;
 }
 
-DWORD WINAPI miningProc(LPVOID lpParameter) {
-
-	while (task.numberOfErrors == 0x7FFFFFFF) {
-
-		Sleep(1);
-	}
-	Sleep(1000);
-
-	__declspec(align(32)) __m256i values[LIMIT][3];
-
-	for (int i = 0; i < 18; i++) {
-
-		values[27 + i][0] = bWords[0][i][0];
-		values[27 + i][1] = bWords[0][i][1];
-		values[27 + i][2] = bWords[0][i][2];
-	}
-
-	while (TRUE) {
-
-		Task task;
-		CopyMemory(&task, (const void*)&::task, sizeof(task));
-
-		FILETIME start;
-		GetSystemTimePreciseAsFileTime(&start);
-
-		int prevNumberOfNeurons = 0;
-
-		{
-			char neuronFlags[LIMIT];
-
-			for (int i = 54; i < LIMIT - 1; i++) {
-
-				neuronFlags[i] = 0;
-			}
-			neuronFlags[LIMIT - 1] = 1;
-			for (int i = LIMIT; i-- > 54; ) {
-
-				if (neuronFlags[i]) {
-
-					neuronFlags[task.links[i][0]] = 1;
-					neuronFlags[task.links[i][1]] = 1;
-					neuronFlags[task.links[i][2]] = 1;
-
-					prevNumberOfNeurons++;
-				}
-			}
-		}
-
-		for (int change = 0; change < numberOfChanges; change++) {
-
-			unsigned int numberOfSteps;
-			_rdrand32_step(&numberOfSteps);
-			numberOfSteps %= LIMIT;
-			int neuronToChange = LIMIT - 1;
-			unsigned int inputToChange;
-			while (numberOfSteps-- > 0) {
-
-				_rdrand32_step(&inputToChange);
-				if ((neuronToChange = task.links[neuronToChange][inputToChange % 3]) < 54) {
-
-					neuronToChange = LIMIT - 1;
-				}
-			}
-			_rdrand32_step(&inputToChange);
-			unsigned int link;
-			_rdrand32_step(&link);
-			task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
-		}
-
-		int numberOfNeurons = 0;
-
-		char neuronFlags[LIMIT];
-
-		for (int i = 54; i < LIMIT - 1; i++) {
-
-			neuronFlags[i] = 0;
-		}
-		neuronFlags[LIMIT - 1] = 1;
-		for (int i = LIMIT; i-- > 54; ) {
-
-			if (neuronFlags[i]) {
-
-				neuronFlags[task.links[i][0]] = 1;
-				neuronFlags[task.links[i][1]] = 1;
-				neuronFlags[task.links[i][2]] = 1;
-
-				numberOfNeurons++;
-			}
-		}
-
-		if ((lpParameter && numberOfNeurons < prevNumberOfNeurons) || (!lpParameter && numberOfNeurons > prevNumberOfNeurons)) {
-
-			if (lpParameter) {
-
-				InterlockedIncrement64(&numberOfXIterations);
-			}
-			else {
-
-				InterlockedIncrement64(&numberOfIterations);
-			}
-		}
-		else {
-
-			int links[LIMIT][3];
-
-			int currentNeuronIndex = 54;
-			int mapping[LIMIT];
-			for (int i = 0; i < 54; i++) {
-
-				mapping[i] = i;
-			}
-			for (int i = 54; i < LIMIT; i++) {
-
-				if (neuronFlags[i]) {
-
-					links[currentNeuronIndex][0] = mapping[task.links[i][0]];
-					links[currentNeuronIndex][1] = mapping[task.links[i][1]];
-					links[currentNeuronIndex][2] = mapping[task.links[i][2]];
-					mapping[i] = currentNeuronIndex++;
-				}
-			}
-
-			int numberOfErrors = 0;
-
-			for (int a = 0; numberOfErrors <= task.numberOfErrors && a < 19683; a++) {
-
-				for (int i = 0; i < 27; i++) {
-
-					values[i][2] = values[i][1] = values[i][0] = aWords[a][i];
-				}
-
-				for (int b = 0; b < 19683 / 243 / 3; b++) {
-
-					for (int i = 18; i < 27; i++) {
-
-						values[27 + i][0] = bWords[b][i][0];
-						values[27 + i][1] = bWords[b][i][1];
-						values[27 + i][2] = bWords[b][i][2];
-					}
-
-					for (int i = 54; i < currentNeuronIndex; i++) {
-
-						__declspec(align(32)) const __m256i tmp00 = _mm256_and_si256(values[links[i][0]][0], values[links[i][1]][0]);
-						__declspec(align(32)) const __m256i tmp10 = _mm256_and_si256(values[links[i][0]][1], values[links[i][1]][1]);
-						__declspec(align(32)) const __m256i tmp20 = _mm256_and_si256(values[links[i][0]][2], values[links[i][1]][2]);
-						__declspec(align(32)) const __m256i tmp01 = _mm256_and_si256(tmp00, values[links[i][2]][0]);
-						__declspec(align(32)) const __m256i tmp11 = _mm256_and_si256(tmp10, values[links[i][2]][1]);
-						__declspec(align(32)) const __m256i tmp21 = _mm256_and_si256(tmp20, values[links[i][2]][2]);
-						values[i][0] = _mm256_xor_si256(tmp01, allOnes);
-						values[i][1] = _mm256_xor_si256(tmp11, allOnes);
-						values[i][2] = _mm256_xor_si256(tmp21, allOnes);
-					}
-
-					long long differences0[4], differences1[4], differences2[4];
-					*((__m256i*)differences0) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][0], diffMask), cWords[a][b][0]);
-					*((__m256i*)differences1) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][1], diffMask), cWords[a][b][1]);
-					*((__m256i*)differences2) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][2], diffMask), cWords[a][b][2]);
-					numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
-						+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
-						+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3]));
-				}
-			}
-
-			if (lpParameter) {
-
-				InterlockedIncrement64(&numberOfXIterations);
-			}
-			else {
-
-				InterlockedIncrement64(&numberOfIterations);
-			}
-
-			BOOL improved = numberOfErrors < task.numberOfErrors ? TRUE : FALSE;
-			if (numberOfErrors <= task.numberOfErrors) {
-
-				if (numberOfErrors < task.numberOfErrors) {
-
-					if (lpParameter) {
-
-						InterlockedAdd64(&numberOfOwnXErrors, task.numberOfErrors - numberOfErrors);
-					}
-					else {
-
-						InterlockedAdd64(&numberOfOwnErrors, task.numberOfErrors - numberOfErrors);
-					}
-				}
-				else {
-
-					if (lpParameter) {
-
-						InterlockedIncrement64(&numberOf0XElimitations);
-					}
-					else {
-
-						InterlockedIncrement64(&numberOf0Elimitations);
-					}
-				}
-
-				do {
-
-					FILETIME finish;
-					GetSystemTimePreciseAsFileTime(&finish);
-					ULARGE_INTEGER s, f;
-					memcpy(&s, &start, sizeof(ULARGE_INTEGER));
-					memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
-
-					struct Solution {
-
-						char command;
-						char currentMiner[70];
-						int numberOfErrors;
-						int links[LIMIT][3];
-
-					} solution;
-					solution.command = 1;
-					CopyMemory(solution.currentMiner, miner, 70);
-					solution.numberOfErrors = numberOfErrors;
-					CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
-					if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
-
-						if (numberOfErrors < task.numberOfErrors) {
-
-							printf("Failed to send a solution!\n");
-						}
-					}
-					else {
-
-						if (numberOfErrors < task.numberOfErrors) {
-
-							char buffer[16], buffer2[16];
-							printf("AVX2: Found a solution reducing number of errors by %s (%s neurons)\n\n", number(task.numberOfErrors - numberOfErrors, buffer), number(numberOfNeurons, buffer2));
-						}
-					}
-
-					Sleep(5000);
-
-				} while (improved && numberOfErrors < ::task.numberOfErrors);
-			}
-		}
-	}
-}
-
-DWORD WINAPI miningProcAVX512(LPVOID lpParameter) {
-
-	while (task.numberOfErrors == 0x7FFFFFFF) {
-
-		Sleep(1);
-	}
-	Sleep(1000);
-
-	__declspec(align(32)) __m256i values[LIMIT][3];
-
-	for (int i = 0; i < 18; i++) {
-
-		values[27 + i][0] = bWords[0][i][0];
-		values[27 + i][1] = bWords[0][i][1];
-		values[27 + i][2] = bWords[0][i][2];
-	}
-
-	while (TRUE) {
-
-		Task task;
-		CopyMemory(&task, (const void*)&::task, sizeof(task));
-
-		FILETIME start;
-		GetSystemTimePreciseAsFileTime(&start);
-
-		int prevNumberOfNeurons = 0;
-
-		{
-			char neuronFlags[LIMIT];
-
-			for (int i = 54; i < LIMIT - 1; i++) {
-
-				neuronFlags[i] = 0;
-			}
-			neuronFlags[LIMIT - 1] = 1;
-			for (int i = LIMIT; i-- > 54; ) {
-
-				if (neuronFlags[i]) {
-
-					neuronFlags[task.links[i][0]] = 1;
-					neuronFlags[task.links[i][1]] = 1;
-					neuronFlags[task.links[i][2]] = 1;
-
-					prevNumberOfNeurons++;
-				}
-			}
-		}
-
-		for (int change = 0; change < numberOfChanges; change++) {
-
-			unsigned int numberOfSteps;
-			_rdrand32_step(&numberOfSteps);
-			numberOfSteps %= LIMIT;
-			int neuronToChange = LIMIT - 1;
-			unsigned int inputToChange;
-			while (numberOfSteps-- > 0) {
-
-				_rdrand32_step(&inputToChange);
-				if ((neuronToChange = task.links[neuronToChange][inputToChange % 3]) < 54) {
-
-					neuronToChange = LIMIT - 1;
-				}
-			}
-			_rdrand32_step(&inputToChange);
-			unsigned int link;
-			_rdrand32_step(&link);
-			task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
-		}
-
-		int numberOfNeurons = 0;
-
-		char neuronFlags[LIMIT];
-
-		for (int i = 54; i < LIMIT - 1; i++) {
-
-			neuronFlags[i] = 0;
-		}
-		neuronFlags[LIMIT - 1] = 1;
-		for (int i = LIMIT; i-- > 54; ) {
-
-			if (neuronFlags[i]) {
-
-				neuronFlags[task.links[i][0]] = 1;
-				neuronFlags[task.links[i][1]] = 1;
-				neuronFlags[task.links[i][2]] = 1;
-
-				numberOfNeurons++;
-			}
-		}
-
-		if ((lpParameter && numberOfNeurons < prevNumberOfNeurons) || (!lpParameter && numberOfNeurons > prevNumberOfNeurons)) {
-
-			if (lpParameter) {
-
-				InterlockedIncrement64(&numberOfXIterations);
-			}
-			else {
-
-				InterlockedIncrement64(&numberOfIterations);
-			}
-		}
-		else {
-
-			int links[LIMIT][3];
-
-			int currentNeuronIndex = 54;
-			int mapping[LIMIT];
-			for (int i = 0; i < 54; i++) {
-
-				mapping[i] = i;
-			}
-			for (int i = 54; i < LIMIT; i++) {
-
-				if (neuronFlags[i]) {
-
-					links[currentNeuronIndex][0] = mapping[task.links[i][0]];
-					links[currentNeuronIndex][1] = mapping[task.links[i][1]];
-					links[currentNeuronIndex][2] = mapping[task.links[i][2]];
-					mapping[i] = currentNeuronIndex++;
-				}
-			}
-
-			int numberOfErrors = 0;
-
-			for (int a = 0; numberOfErrors <= task.numberOfErrors && a < 19683; a++) {
-
-				for (int i = 0; i < 27; i++) {
-
-					values[i][2] = values[i][1] = values[i][0] = aWords[a][i];
-				}
-
-				for (int b = 0; b < 19683 / 243 / 3; b++) {
-
-					for (int i = 18; i < 27; i++) {
-
-						values[27 + i][0] = bWords[b][i][0];
-						values[27 + i][1] = bWords[b][i][1];
-						values[27 + i][2] = bWords[b][i][2];
-					}
-
-					for (int i = 54; i < currentNeuronIndex; i++) {
-
-						values[i][0] = _mm256_ternarylogic_epi32(values[links[i][0]][0], values[links[i][1]][0], values[links[i][2]][0], 0x7F);
-						values[i][1] = _mm256_ternarylogic_epi32(values[links[i][0]][1], values[links[i][1]][1], values[links[i][2]][1], 0x7F);
-						values[i][2] = _mm256_ternarylogic_epi32(values[links[i][0]][2], values[links[i][1]][2], values[links[i][2]][2], 0x7F);
-					}
-
-					long long differences0[4], differences1[4], differences2[4];
-					*((__m256i*)differences0) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][0], diffMask), cWords[a][b][0]);
-					*((__m256i*)differences1) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][1], diffMask), cWords[a][b][1]);
-					*((__m256i*)differences2) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][2], diffMask), cWords[a][b][2]);
-					numberOfErrors += (int)(_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
-						+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
-						+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3]));
-				}
-			}
-
-			if (lpParameter) {
-
-				InterlockedIncrement64(&numberOfXIterations);
-			}
-			else {
-
-				InterlockedIncrement64(&numberOfIterations);
-			}
-
-			BOOL improved = numberOfErrors < task.numberOfErrors ? TRUE : FALSE;
-			if (numberOfErrors <= task.numberOfErrors) {
-
-				if (numberOfErrors < task.numberOfErrors) {
-
-					if (lpParameter) {
-
-						InterlockedAdd64(&numberOfOwnXErrors, task.numberOfErrors - numberOfErrors);
-					}
-					else {
-
-						InterlockedAdd64(&numberOfOwnErrors, task.numberOfErrors - numberOfErrors);
-					}
-				}
-				else {
-
-					if (lpParameter) {
-
-						InterlockedIncrement64(&numberOf0XElimitations);
-					}
-					else {
-
-						InterlockedIncrement64(&numberOf0Elimitations);
-					}
-				}
-
-				do {
-
-					FILETIME finish;
-					GetSystemTimePreciseAsFileTime(&finish);
-					ULARGE_INTEGER s, f;
-					memcpy(&s, &start, sizeof(ULARGE_INTEGER));
-					memcpy(&f, &finish, sizeof(ULARGE_INTEGER));
-
-					struct Solution {
-
-						char command;
-						char currentMiner[70];
-						int numberOfErrors;
-						int links[LIMIT][3];
-
-					} solution;
-					solution.command = 1;
-					CopyMemory(solution.currentMiner, miner, 70);
-					solution.numberOfErrors = numberOfErrors;
-					CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
-					if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
-
-						if (numberOfErrors < task.numberOfErrors) {
-
-							printf("Failed to send a solution!\n");
-						}
-					}
-					else {
-
-						if (numberOfErrors < task.numberOfErrors) {
-
-							char buffer[16], buffer2[16];
-							printf("AVX-512: Found a solution reducing number of errors by %s (%s neurons)\n\n", number(task.numberOfErrors - numberOfErrors, buffer), number(numberOfNeurons, buffer2));
-						}
-					}
-
-					Sleep(5000);
-
-				} while (improved && numberOfErrors < ::task.numberOfErrors);
-			}
-		}
-	}
-}
-
 DWORD WINAPI httpProc(LPVOID lpParameter) {
 
 	SOCKET serverSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -790,11 +321,431 @@ DWORD WINAPI httpProc(LPVOID lpParameter) {
 	}
 }
 
+DWORD WINAPI miningProc(LPVOID lpParameter) {
+
+	__declspec(align(32)) __m256i values[LIMIT][3];
+
+	for (int i = 0; i < 18; i++) {
+
+		values[27 + i][0] = bWords[0][i][0];
+		values[27 + i][1] = bWords[0][i][1];
+		values[27 + i][2] = bWords[0][i][2];
+	}
+
+	while (TRUE) {
+
+		EnterCriticalSection(&critSect);
+
+		if (nextSubtask == 19683) {
+
+			LeaveCriticalSection(&critSect);
+
+			Sleep(1);
+
+			continue;
+		}
+
+		const long long subtask = nextSubtask++;
+
+		if (subtask == 0) {
+
+			if (GetTickCount64() - latestTaskTime >= 5000) {
+
+				latestTaskTime = GetTickCount64();
+
+				while (TRUE) {
+
+					int prevNumberOfErrors = task.numberOfErrors;
+
+					char getTask[71];
+					getTask[0] = 0;
+					CopyMemory(&getTask[1], miner, 70);
+					if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
+
+						printf("Failed to receive a task!\n");
+
+						Sleep(5000);
+					}
+					else {
+
+						BOOL justChanged = FALSE;
+
+						if (prevNumberOfErrors > task.numberOfErrors) {
+
+							latestSolutionTime = GetTickCount64();
+
+							justChanged = TRUE;
+
+							if (prevNumberOfErrors == 0x7FFFFFFF) {
+
+								CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
+								CopyMemory((void*)&prevPrevTask, (void*)&task, sizeof(Task));
+
+								CreateThread(NULL, 0, httpProc, NULL, 0, NULL);
+							}
+							else {
+
+								numberOfAllErrors += prevNumberOfErrors - task.numberOfErrors;
+							}
+						}
+
+						long long millisecondsSinceLatestSolution = GetTickCount64() - latestSolutionTime;
+
+						numberOfChanges = (GetTickCount64() - latestSolutionTime) / 600000 + 1;
+
+						char buffer[12];
+
+						printf("\n--- Top 10 miners out of %d:                 [v0.3.7]\n", task.numberOfMiners);
+						for (int i = 0; i < 10; i++) {
+
+							printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
+							if (prevPrevTask.topMinerScores[i] == task.topMinerScores[i]) {
+
+								printf("\n");
+							}
+							else {
+
+								printf(" (increased by %s)\n", number(task.topMinerScores[i] - prevPrevTask.topMinerScores[i], buffer));
+							}
+						}
+						printf("---\n");
+						std::cout << InstructionSet::Brand() << std::endl;
+						printf("   %s[AVX2]   %s[AVX512CD]   %s[AVX512ER]   %s[AVX512F]   %s[AVX512PF]\n", InstructionSet::AVX2() ? "+" : "-", InstructionSet::AVX512CD() ? "+" : "-", InstructionSet::AVX512ER() ? "+" : "-", InstructionSet::AVX512F() ? "+" : "-", InstructionSet::AVX512PF() ? "+" : "-");
+						printf("---\n");
+						printf("You are #%d with %s found solutions", task.currentMinerPlace, number(task.currentMinerScore, buffer));
+						if (prevPrevTask.currentMinerScore == task.currentMinerScore) {
+
+							printf("\n");
+						}
+						else {
+
+							printf(" (increased by %s)\n", number(task.currentMinerScore - prevPrevTask.currentMinerScore, buffer));
+						}
+
+						long long totalNumberOfIterations = 0;
+						for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]); i++) {
+
+							totalNumberOfIterations += performanceCounters[i];
+						}
+						FILETIME currentTimestamp;
+						GetSystemTimePreciseAsFileTime(&currentTimestamp);
+						long long latestNumberOfIterations = numberOfIterations;
+						numberOfIterations = 0;
+						ULARGE_INTEGER s, f;
+						memcpy(&s, &performanceTimestamps[0], sizeof(ULARGE_INTEGER));
+						memcpy(&f, &currentTimestamp, sizeof(ULARGE_INTEGER));
+						totalNumberOfIterations += latestNumberOfIterations;
+						for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1; i++) {
+
+							CopyMemory(&performanceTimestamps[i], &performanceTimestamps[i + 1], sizeof(performanceTimestamps[0]));
+							performanceCounters[i] = performanceCounters[i + 1];
+						}
+						CopyMemory(&performanceTimestamps[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1], &currentTimestamp, sizeof(performanceTimestamps[0]));
+						performanceCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfIterations;
+						SYSTEM_INFO systemInfo;
+						GetNativeSystemInfo(&systemInfo);
+						printf("Your iteration rate is %.3f iterations/s (%d/%d threads, %d changes)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, systemInfo.dwNumberOfProcessors, numberOfChanges);
+
+						double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
+						printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations)\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
+						printf("Pool error elimination rate is ~%.3f errors/h\n", numberOfAllErrors * 3600 / delta);
+						printf("");
+						printf("---\n");
+
+						if (justChanged) {
+
+							CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
+							CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
+						}
+
+						char buffer2[16];
+						printf("There are %s errors left (decreased by %s) (at least %02d:%02d:%02d since latest solution)\n\n", number(task.numberOfErrors, buffer), number(prevPrevTask.numberOfErrors - task.numberOfErrors, buffer2), millisecondsSinceLatestSolution / 3600000, millisecondsSinceLatestSolution % 3600000 / 60000, millisecondsSinceLatestSolution % 60000 / 1000);
+
+						prevNumberOfNeurons = 0;
+						char neuronFlags[LIMIT];
+
+						for (int i = 54; i < LIMIT - 1; i++) {
+
+							neuronFlags[i] = 0;
+						}
+						neuronFlags[LIMIT - 1] = 1;
+						for (int i = LIMIT; i-- > 54; ) {
+
+							if (neuronFlags[i]) {
+
+								neuronFlags[task.links[i][0]] = 1;
+								neuronFlags[task.links[i][1]] = 1;
+								neuronFlags[task.links[i][2]] = 1;
+
+								prevNumberOfNeurons++;
+							}
+						}
+
+						for (int change = 0; change < numberOfChanges; change++) {
+
+							unsigned int neuronToChange;
+							_rdrand32_step(&neuronToChange);
+							neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
+							while (!neuronFlags[neuronToChange]) {
+
+								neuronToChange++;
+							}
+							unsigned int inputToChange;
+							_rdrand32_step(&inputToChange);
+							unsigned int link;
+							_rdrand32_step(&link);
+							task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
+						}
+
+						numberOfNeurons = 0;
+						for (int i = 54; i < LIMIT - 1; i++) {
+
+							neuronFlags[i] = 0;
+						}
+						neuronFlags[LIMIT - 1] = 1;
+						for (int i = LIMIT; i-- > 54; ) {
+
+							if (neuronFlags[i]) {
+
+								neuronFlags[task.links[i][0]] = 1;
+								neuronFlags[task.links[i][1]] = 1;
+								neuronFlags[task.links[i][2]] = 1;
+
+								numberOfNeurons++;
+							}
+						}
+
+						currentNeuronIndex = 54;
+						int mapping[LIMIT];
+						for (int i = 0; i < 54; i++) {
+
+							mapping[i] = i;
+						}
+						for (int i = 54; i < LIMIT; i++) {
+
+							if (neuronFlags[i]) {
+
+								links[currentNeuronIndex][0] = mapping[task.links[i][0]];
+								links[currentNeuronIndex][1] = mapping[task.links[i][1]];
+								links[currentNeuronIndex][2] = mapping[task.links[i][2]];
+								mapping[i] = currentNeuronIndex++;
+							}
+						}
+
+						totalNumberOfErrors = 0;
+
+						break;
+					}
+				}
+			}
+			else {
+
+				prevNumberOfNeurons = 0;
+				char neuronFlags[LIMIT];
+
+				for (int i = 54; i < LIMIT - 1; i++) {
+
+					neuronFlags[i] = 0;
+				}
+				neuronFlags[LIMIT - 1] = 1;
+				for (int i = LIMIT; i-- > 54; ) {
+
+					if (neuronFlags[i]) {
+
+						neuronFlags[task.links[i][0]] = 1;
+						neuronFlags[task.links[i][1]] = 1;
+						neuronFlags[task.links[i][2]] = 1;
+
+						prevNumberOfNeurons++;
+					}
+				}
+
+				for (int change = 0; change < numberOfChanges; change++) {
+
+					unsigned int neuronToChange;
+					_rdrand32_step(&neuronToChange);
+					neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
+					while (!neuronFlags[neuronToChange]) {
+
+						neuronToChange++;
+					}
+					unsigned int inputToChange;
+					_rdrand32_step(&inputToChange);
+					unsigned int link;
+					_rdrand32_step(&link);
+					task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
+				}
+
+				numberOfNeurons = 0;
+				for (int i = 54; i < LIMIT - 1; i++) {
+
+					neuronFlags[i] = 0;
+				}
+				neuronFlags[LIMIT - 1] = 1;
+				for (int i = LIMIT; i-- > 54; ) {
+
+					if (neuronFlags[i]) {
+
+						neuronFlags[task.links[i][0]] = 1;
+						neuronFlags[task.links[i][1]] = 1;
+						neuronFlags[task.links[i][2]] = 1;
+
+						numberOfNeurons++;
+					}
+				}
+
+				currentNeuronIndex = 54;
+				int mapping[LIMIT];
+				for (int i = 0; i < 54; i++) {
+
+					mapping[i] = i;
+				}
+				for (int i = 54; i < LIMIT; i++) {
+
+					if (neuronFlags[i]) {
+
+						links[currentNeuronIndex][0] = mapping[task.links[i][0]];
+						links[currentNeuronIndex][1] = mapping[task.links[i][1]];
+						links[currentNeuronIndex][2] = mapping[task.links[i][2]];
+						mapping[i] = currentNeuronIndex++;
+					}
+				}
+
+				totalNumberOfErrors = 0;
+ 			}
+		}
+
+		LeaveCriticalSection(&critSect);
+
+		for (int i = 0; i < 27; i++) {
+
+			values[i][2] = values[i][1] = values[i][0] = aWords[subtask][i];
+		}
+
+		if (lpParameter) {
+
+			for (int b = 0; totalNumberOfErrors <= task.numberOfErrors && b < 19683 / 243 / 3; b++) {
+
+				for (int i = 18; i < 27; i++) {
+
+					values[27 + i][0] = bWords[b][i][0];
+					values[27 + i][1] = bWords[b][i][1];
+					values[27 + i][2] = bWords[b][i][2];
+				}
+
+				for (int i = 54; i < currentNeuronIndex; i++) {
+
+					values[i][0] = _mm256_ternarylogic_epi32(values[links[i][0]][0], values[links[i][1]][0], values[links[i][2]][0], 0x7F);
+					values[i][1] = _mm256_ternarylogic_epi32(values[links[i][0]][1], values[links[i][1]][1], values[links[i][2]][1], 0x7F);
+					values[i][2] = _mm256_ternarylogic_epi32(values[links[i][0]][2], values[links[i][1]][2], values[links[i][2]][2], 0x7F);
+				}
+
+				long long differences0[4], differences1[4], differences2[4];
+				*((__m256i*)differences0) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][0], diffMask), cWords[subtask][b][0]);
+				*((__m256i*)differences1) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][1], diffMask), cWords[subtask][b][1]);
+				*((__m256i*)differences2) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][2], diffMask), cWords[subtask][b][2]);
+				InterlockedAdd64(&totalNumberOfErrors,
+					_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
+					+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
+					+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3])
+				);
+			}
+		}
+		else {
+
+			for (int b = 0; totalNumberOfErrors <= task.numberOfErrors && b < 19683 / 243 / 3; b++) {
+
+				for (int i = 18; i < 27; i++) {
+
+					values[27 + i][0] = bWords[b][i][0];
+					values[27 + i][1] = bWords[b][i][1];
+					values[27 + i][2] = bWords[b][i][2];
+				}
+
+				for (int i = 54; i < currentNeuronIndex; i++) {
+
+					__declspec(align(32)) const __m256i tmp00 = _mm256_and_si256(values[links[i][0]][0], values[links[i][1]][0]);
+					__declspec(align(32)) const __m256i tmp10 = _mm256_and_si256(values[links[i][0]][1], values[links[i][1]][1]);
+					__declspec(align(32)) const __m256i tmp20 = _mm256_and_si256(values[links[i][0]][2], values[links[i][1]][2]);
+					__declspec(align(32)) const __m256i tmp01 = _mm256_and_si256(tmp00, values[links[i][2]][0]);
+					__declspec(align(32)) const __m256i tmp11 = _mm256_and_si256(tmp10, values[links[i][2]][1]);
+					__declspec(align(32)) const __m256i tmp21 = _mm256_and_si256(tmp20, values[links[i][2]][2]);
+					values[i][0] = _mm256_xor_si256(tmp01, allOnes);
+					values[i][1] = _mm256_xor_si256(tmp11, allOnes);
+					values[i][2] = _mm256_xor_si256(tmp21, allOnes);
+				}
+
+				long long differences0[4], differences1[4], differences2[4];
+				*((__m256i*)differences0) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][0], diffMask), cWords[subtask][b][0]);
+				*((__m256i*)differences1) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][1], diffMask), cWords[subtask][b][1]);
+				*((__m256i*)differences2) = _mm256_xor_si256(_mm256_and_si256(values[currentNeuronIndex - 1][2], diffMask), cWords[subtask][b][2]);
+				InterlockedAdd64(&totalNumberOfErrors,
+					_mm_popcnt_u64(differences0[0]) + _mm_popcnt_u64(differences0[1]) + _mm_popcnt_u64(differences0[2]) + _mm_popcnt_u64(differences0[3])
+					+ _mm_popcnt_u64(differences1[0]) + _mm_popcnt_u64(differences1[1]) + _mm_popcnt_u64(differences1[2]) + _mm_popcnt_u64(differences1[3])
+					+ _mm_popcnt_u64(differences2[0]) + _mm_popcnt_u64(differences2[1]) + _mm_popcnt_u64(differences2[2]) + _mm_popcnt_u64(differences2[3])
+				);
+			}
+		}
+
+		if (InterlockedIncrement64(&numberOfCompletedSubtasks) == 19683) {
+
+			InterlockedIncrement64(&numberOfIterations);
+
+			BOOL improved = totalNumberOfErrors < task.numberOfErrors ? TRUE : FALSE;
+			if (totalNumberOfErrors <= task.numberOfErrors) {
+
+				if (totalNumberOfErrors < task.numberOfErrors) {
+
+					InterlockedAdd64(&numberOfOwnErrors, task.numberOfErrors - totalNumberOfErrors);
+				}
+				else {
+
+					InterlockedIncrement64(&numberOf0Elimitations);
+				}
+
+				if (totalNumberOfErrors <= task.numberOfErrors) {
+
+					struct Solution {
+
+						char command;
+						char currentMiner[70];
+						int numberOfErrors;
+						int links[LIMIT][3];
+
+					} solution;
+					solution.command = 1;
+					CopyMemory(solution.currentMiner, miner, 70);
+					solution.numberOfErrors = totalNumberOfErrors;
+					CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
+					if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
+
+						if (totalNumberOfErrors < task.numberOfErrors) {
+
+							printf("Failed to send a solution!\n");
+						}
+					}
+					else {
+
+						if (totalNumberOfErrors < task.numberOfErrors) {
+
+							char buffer[16], buffer2[16], buffer3[16];
+							printf("%s: Found a solution reducing number of errors by %s (%s -> %s neurons)\n\n", lpParameter ? "AVX-512" : "AVX2", number(task.numberOfErrors - totalNumberOfErrors, buffer), number(prevNumberOfNeurons, buffer2), number(numberOfNeurons, buffer3));
+						}
+					}
+				}
+			}
+
+			numberOfCompletedSubtasks = 0;
+			nextSubtask = 0;
+		}
+	}
+}
+
 int main(int argc, char* argv[]) {
 
-	if (argc < 2) {
+	if (argc < 3) {
 
-		printf("qiner.exe <MyIdentity> <NumberOfDeflatingThreads> <NumberOfInflatingThreads>\n");
+		printf("qiner.exe <MyIdentity> <NumberOfThreads>\n");
 
 		return 0;
 	}
@@ -889,161 +840,23 @@ int main(int argc, char* argv[]) {
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 
+	InitializeCriticalSection(&critSect);
+
 	task.numberOfErrors = 0x7FFFFFFF;
-
-	SYSTEM_INFO systemInfo;
-	GetNativeSystemInfo(&systemInfo);
-
-	int numberOfThreads = (argc >= 3) ? atoi(argv[2]) : 0;
-	int numberOfXThreads = (argc >= 4) ? atoi(argv[3]) : 0;
-
-	for (int i = 0; i < numberOfThreads; i++) {
-
-		CreateThread(NULL, 2 * 1024 * 1024, InstructionSet::AVX512F() ? miningProcAVX512 : miningProc, NULL, 0, NULL);
-	}
-	for (int i = 0; i < numberOfXThreads; i++) {
-
-		CreateThread(NULL, 2 * 1024 * 1024, InstructionSet::AVX512F() ? miningProcAVX512 : miningProc, (LPVOID)1, 0, NULL);
-	}
-
-	long long latestSolutionTime = GetTickCount64();
+	numberOfThreads = atoi(argv[2]);
+	latestSolutionTime = GetTickCount64();
 
 	for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]); i++) {
 
 		GetSystemTimePreciseAsFileTime(&performanceTimestamps[i]);
 		performanceCounters[i] = 0;
-		performanceXCounters[i] = 0;
 	}
 	numberOfIterations = 0;
-	numberOfXIterations = 0;
 
-	while (TRUE) {
+	for (int i = 0; i < numberOfThreads - 1; i++) {
 
-		while (TRUE) {
-
-			int prevNumberOfErrors = task.numberOfErrors;
-
-			char getTask[71];
-			getTask[0] = 0;
-			CopyMemory(&getTask[1], miner, 70);
-			if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
-
-				printf("Failed to receive a task!\n");
-
-				Sleep(5000);
-			}
-			else {
-
-				BOOL justChanged = FALSE;
-
-				if (prevNumberOfErrors > task.numberOfErrors) {
-
-					latestSolutionTime = GetTickCount64();
-
-					justChanged = TRUE;
-
-					if (prevNumberOfErrors == 0x7FFFFFFF) {
-
-						CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
-						CopyMemory((void*)&prevPrevTask, (void*)&task, sizeof(Task));
-
-						CreateThread(NULL, 0, httpProc, NULL, 0, NULL);
-					}
-					else {
-
-						numberOfAllErrors += prevNumberOfErrors - task.numberOfErrors;
-					}
-				}
-
-				long long millisecondsSinceLatestSolution = GetTickCount64() - latestSolutionTime;
-
-				if (millisecondsSinceLatestSolution > 15 * 60 * 1000) {
-
-					numberOfChanges = 2;
-				}
-				else {
-
-					numberOfChanges = 1;
-				}
-
-				char buffer[12];
-
-				printf("\n--- Top 10 miners out of %d:                 [v0.3.2]\n", task.numberOfMiners);
-				for (int i = 0; i < 10; i++) {
-
-					printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
-					if (prevPrevTask.topMinerScores[i] == task.topMinerScores[i]) {
-
-						printf("\n");
-					}
-					else {
-
-						printf(" (increased by %s)\n", number(task.topMinerScores[i] - prevPrevTask.topMinerScores[i], buffer));
-					}
-				}
-				printf("---\n");
-				std::cout << InstructionSet::Brand() << std::endl;
-				printf("   %s[AVX2]   %s[AVX512CD]   %s[AVX512ER]   %s[AVX512F]   %s[AVX512PF]\n", InstructionSet::AVX2() ? "+" : "-", InstructionSet::AVX512CD() ? "+" : "-", InstructionSet::AVX512ER() ? "+" : "-", InstructionSet::AVX512F() ? "+" : "-", InstructionSet::AVX512PF() ? "+" : "-");
-				printf("---\n");
-				printf("You are #%d with %s found solutions", task.currentMinerPlace, number(task.currentMinerScore, buffer));
-				if (prevPrevTask.currentMinerScore == task.currentMinerScore) {
-
-					printf("\n");
-				}
-				else {
-
-					printf(" (increased by %s)\n", number(task.currentMinerScore - prevPrevTask.currentMinerScore, buffer));
-				}
-
-				long long totalNumberOfIterations = 0;
-				long long totalNumberOfXIterations = 0;
-				for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]); i++) {
-
-					totalNumberOfIterations += performanceCounters[i];
-					totalNumberOfXIterations += performanceXCounters[i];
-				}
-				FILETIME currentTimestamp;
-				GetSystemTimePreciseAsFileTime(&currentTimestamp);
-				long long latestNumberOfIterations = numberOfIterations;
-				long long latestNumberOfXIterations = numberOfXIterations;
-				numberOfIterations = 0;
-				numberOfXIterations = 0;
-				ULARGE_INTEGER s, f;
-				memcpy(&s, &performanceTimestamps[0], sizeof(ULARGE_INTEGER));
-				memcpy(&f, &currentTimestamp, sizeof(ULARGE_INTEGER));
-				totalNumberOfIterations += latestNumberOfIterations;
-				totalNumberOfXIterations += latestNumberOfXIterations;
-				for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1; i++) {
-
-					CopyMemory(&performanceTimestamps[i], &performanceTimestamps[i + 1], sizeof(performanceTimestamps[0]));
-					performanceCounters[i] = performanceCounters[i + 1];
-					performanceXCounters[i] = performanceXCounters[i + 1];
-				}
-				CopyMemory(&performanceTimestamps[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1], &currentTimestamp, sizeof(performanceTimestamps[0]));
-				performanceCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfIterations;
-				performanceXCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfXIterations;
-				printf("Your iteration rate is %.3f (deflation) + %.3f (inflation) = %.3f iterations/s ([%d+%d]/%d threads, %d changes)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), totalNumberOfXIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), (totalNumberOfIterations + totalNumberOfXIterations) * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, numberOfXThreads, systemInfo.dwNumberOfProcessors, numberOfChanges);
-
-				double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
-				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations) @ Deflation\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
-				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations) @ Inflation\n", numberOfOwnXErrors * 3600 / delta, number(numberOf0XElimitations, buffer));
-				printf("Pool error elimination rate is ~%.3f errors/h\n", numberOfAllErrors * 3600 / delta);
-				printf("");
-				printf("---\n");
-
-				if (justChanged) {
-
-					CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
-					CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
-				}
-
-				char buffer2[16];
-				printf("There are %s errors left (decreased by %s) (at least %02d:%02d:%02d since latest solution)\n\n", number(task.numberOfErrors, buffer), number(prevPrevTask.numberOfErrors - task.numberOfErrors, buffer2), millisecondsSinceLatestSolution / 3600000, millisecondsSinceLatestSolution % 3600000 / 60000, millisecondsSinceLatestSolution % 60000 / 1000);
-
-				break;
-			}
-		}
-
-		Sleep(5000);
+		CreateThread(NULL, 2 * 1024 * 1024, miningProc, (LPVOID)InstructionSet::AVX512F(), 0, NULL);
 	}
+
+	miningProc((LPVOID)InstructionSet::AVX512F());
 }
