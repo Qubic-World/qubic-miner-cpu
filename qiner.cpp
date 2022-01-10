@@ -349,6 +349,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 		if (subtask == 0) {
 
+			BOOL displayInputs = FALSE;
 			if (GetTickCount64() - latestTaskTime >= 5000) {
 
 				latestTaskTime = GetTickCount64();
@@ -360,13 +361,19 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					char getTask[71];
 					getTask[0] = 0;
 					CopyMemory(&getTask[1], miner, 70);
-					if (exchange(getTask, sizeof(getTask), (char*)&task, sizeof(task)) != sizeof(task)) {
+					Task poolTask;
+					if (exchange(getTask, sizeof(getTask), (char*)&poolTask, sizeof(poolTask)) != sizeof(poolTask)) {
 
 						printf("Failed to receive a task!\n");
 
 						Sleep(5000);
 					}
 					else {
+
+						if (poolTask.numberOfErrors < task.numberOfErrors) {
+
+							CopyMemory((void*)&task, (const void*)&poolTask, sizeof(poolTask));
+						}
 
 						CopyMemory((void*)&nonChangedTask, (const void*)&task, sizeof(task));
 
@@ -397,7 +404,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 						char buffer[12];
 
-						printf("\n--- Top 10 miners out of %d:                 [v0.3.8]\n", task.numberOfMiners);
+						printf("\n--- Top 10 miners out of %d:                 [v0.3.9]\n", task.numberOfMiners);
 						for (int i = 0; i < 10; i++) {
 
 							printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
@@ -463,78 +470,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 						char buffer2[16];
 						printf("There are %s errors left (decreased by %s) (at least %02d:%02d:%02d since latest solution)\n\n", number(task.numberOfErrors, buffer), number(prevPrevTask.numberOfErrors - task.numberOfErrors, buffer2), millisecondsSinceLatestSolution / 3600000, millisecondsSinceLatestSolution % 3600000 / 60000, millisecondsSinceLatestSolution % 60000 / 1000);
 
-						prevNumberOfNeurons = 0;
-						char neuronFlags[LIMIT];
-
-						for (int i = 54; i < LIMIT - 1; i++) {
-
-							neuronFlags[i] = 0;
-						}
-						neuronFlags[LIMIT - 1] = 1;
-						for (int i = LIMIT; i-- > 54; ) {
-
-							if (neuronFlags[i]) {
-
-								neuronFlags[task.links[i][0]] = 1;
-								neuronFlags[task.links[i][1]] = 1;
-								neuronFlags[task.links[i][2]] = 1;
-
-								prevNumberOfNeurons++;
-							}
-						}
-
-						for (int change = 0; change < numberOfChanges; change++) {
-
-							unsigned int neuronToChange;
-							_rdrand32_step(&neuronToChange);
-							neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
-							while (!neuronFlags[neuronToChange]) {
-
-								neuronToChange++;
-							}
-							unsigned int inputToChange;
-							_rdrand32_step(&inputToChange);
-							unsigned int link;
-							_rdrand32_step(&link);
-							task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
-						}
-
-						numberOfNeurons = 0;
-						for (int i = 54; i < LIMIT - 1; i++) {
-
-							neuronFlags[i] = 0;
-						}
-						neuronFlags[LIMIT - 1] = 1;
-						for (int i = LIMIT; i-- > 54; ) {
-
-							if (neuronFlags[i]) {
-
-								neuronFlags[task.links[i][0]] = 1;
-								neuronFlags[task.links[i][1]] = 1;
-								neuronFlags[task.links[i][2]] = 1;
-
-								numberOfNeurons++;
-							}
-						}
-
-						currentNeuronIndex = 54;
-						int mapping[LIMIT];
-						for (int i = 0; i < 54; i++) {
-
-							mapping[i] = i;
-						}
-						for (int i = 54; i < LIMIT; i++) {
-
-							if (neuronFlags[i]) {
-
-								links[currentNeuronIndex][0] = mapping[task.links[i][0]];
-								links[currentNeuronIndex][1] = mapping[task.links[i][1]];
-								links[currentNeuronIndex][2] = mapping[task.links[i][2]];
-								mapping[i] = currentNeuronIndex++;
-							}
-						}
-
-						totalNumberOfErrors = 0;
+						displayInputs = TRUE;
 
 						break;
 					}
@@ -542,79 +478,99 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			}
 			else {
 
-				prevNumberOfNeurons = 0;
-				char neuronFlags[LIMIT];
+				CopyMemory((void*)&nonChangedTask, (const void*)&task, sizeof(task));
+			}
 
-				for (int i = 54; i < LIMIT - 1; i++) {
+			prevNumberOfNeurons = 0;
+			char neuronFlags[LIMIT];
 
-					neuronFlags[i] = 0;
+			for (int i = 0; i < LIMIT - 1; i++) {
+
+				neuronFlags[i] = 0;
+			}
+			neuronFlags[LIMIT - 1] = 1;
+			for (int i = LIMIT; i-- > 54; ) {
+
+				if (neuronFlags[i]) {
+
+					neuronFlags[task.links[i][0]] = 1;
+					neuronFlags[task.links[i][1]] = 1;
+					neuronFlags[task.links[i][2]] = 1;
+
+					prevNumberOfNeurons++;
 				}
-				neuronFlags[LIMIT - 1] = 1;
-				for (int i = LIMIT; i-- > 54; ) {
+			}
 
-					if (neuronFlags[i]) {
+			if (displayInputs) {
 
-						neuronFlags[task.links[i][0]] = 1;
-						neuronFlags[task.links[i][1]] = 1;
-						neuronFlags[task.links[i][2]] = 1;
+				for (int i = 0; i < 54; i += 3) {
 
-						prevNumberOfNeurons++;
-					}
+					printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
 				}
+				printf("|\n");
+			}
 
-				for (int change = 0; change < numberOfChanges; change++) {
+			for (int change = 0; change < numberOfChanges; change++) {
 
-					unsigned int neuronToChange;
-					_rdrand32_step(&neuronToChange);
-					neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
-					while (!neuronFlags[neuronToChange]) {
+				unsigned int neuronToChange;
+				_rdrand32_step(&neuronToChange);
+				neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
+				while (!neuronFlags[neuronToChange]) {
 
-						neuronToChange++;
-					}
-					unsigned int inputToChange;
-					_rdrand32_step(&inputToChange);
-					unsigned int link;
-					_rdrand32_step(&link);
-					task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
+					neuronToChange++;
 				}
+				unsigned int inputToChange;
+				_rdrand32_step(&inputToChange);
+				unsigned int link;
+				_rdrand32_step(&link);
+				task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
+			}
 
-				numberOfNeurons = 0;
-				for (int i = 54; i < LIMIT - 1; i++) {
+			numberOfNeurons = 0;
+			for (int i = 0; i < LIMIT - 1; i++) {
 
-					neuronFlags[i] = 0;
+				neuronFlags[i] = 0;
+			}
+			neuronFlags[LIMIT - 1] = 1;
+			for (int i = LIMIT; i-- > 54; ) {
+
+				if (neuronFlags[i]) {
+
+					neuronFlags[task.links[i][0]] = 1;
+					neuronFlags[task.links[i][1]] = 1;
+					neuronFlags[task.links[i][2]] = 1;
+
+					numberOfNeurons++;
 				}
-				neuronFlags[LIMIT - 1] = 1;
-				for (int i = LIMIT; i-- > 54; ) {
+			}
 
-					if (neuronFlags[i]) {
+			if (displayInputs) {
 
-						neuronFlags[task.links[i][0]] = 1;
-						neuronFlags[task.links[i][1]] = 1;
-						neuronFlags[task.links[i][2]] = 1;
+				for (int i = 0; i < 54; i += 3) {
 
-						numberOfNeurons++;
-					}
+					printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
 				}
+				printf("|\n");
+			}
 
-				currentNeuronIndex = 54;
-				int mapping[LIMIT];
-				for (int i = 0; i < 54; i++) {
+			currentNeuronIndex = 54;
+			int mapping[LIMIT];
+			for (int i = 0; i < 54; i++) {
 
-					mapping[i] = i;
+				mapping[i] = i;
+			}
+			for (int i = 54; i < LIMIT; i++) {
+
+				if (neuronFlags[i]) {
+
+					links[currentNeuronIndex][0] = mapping[task.links[i][0]];
+					links[currentNeuronIndex][1] = mapping[task.links[i][1]];
+					links[currentNeuronIndex][2] = mapping[task.links[i][2]];
+					mapping[i] = currentNeuronIndex++;
 				}
-				for (int i = 54; i < LIMIT; i++) {
+			}
 
-					if (neuronFlags[i]) {
-
-						links[currentNeuronIndex][0] = mapping[task.links[i][0]];
-						links[currentNeuronIndex][1] = mapping[task.links[i][1]];
-						links[currentNeuronIndex][2] = mapping[task.links[i][2]];
-						mapping[i] = currentNeuronIndex++;
-					}
-				}
-
-				totalNumberOfErrors = 0;
- 			}
+			totalNumberOfErrors = 0;
 		}
 
 		LeaveCriticalSection(&critSect);
