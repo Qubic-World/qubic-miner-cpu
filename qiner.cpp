@@ -33,7 +33,7 @@ volatile struct Task {
 	int numberOfErrors;
 	int links[LIMIT][3];
 
-} task, prevTask, prevPrevTask;
+} task, prevTask, prevPrevTask, nonChangedTask;
 
 int links[LIMIT][3];
 
@@ -368,6 +368,8 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					}
 					else {
 
+						CopyMemory((void*)&nonChangedTask, (const void*)&task, sizeof(task));
+
 						BOOL justChanged = FALSE;
 
 						if (prevNumberOfErrors > task.numberOfErrors) {
@@ -395,7 +397,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 						char buffer[12];
 
-						printf("\n--- Top 10 miners out of %d:                 [v0.3.7]\n", task.numberOfMiners);
+						printf("\n--- Top 10 miners out of %d:                 [v0.3.8]\n", task.numberOfMiners);
 						for (int i = 0; i < 10; i++) {
 
 							printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
@@ -448,7 +450,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 						double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
 						printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations)\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
-						printf("Pool error elimination rate is ~%.3f errors/h\n", numberOfAllErrors * 3600 / delta);
+						printf("Remaining pool error elimination rate is ~%.3f errors/h\n", numberOfAllErrors * 3600 / delta);
 						printf("");
 						printf("---\n");
 
@@ -730,9 +732,18 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 							char buffer[16], buffer2[16], buffer3[16];
 							printf("%s: Found a solution reducing number of errors by %s (%s -> %s neurons)\n\n", lpParameter ? "AVX-512" : "AVX2", number(task.numberOfErrors - totalNumberOfErrors, buffer), number(prevNumberOfNeurons, buffer2), number(numberOfNeurons, buffer3));
+
+							CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
+							CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
+							task.numberOfErrors = totalNumberOfErrors;
+							latestSolutionTime = GetTickCount64();
 						}
 					}
 				}
+			}
+			else {
+
+				CopyMemory((void*)&task, (const void*)&nonChangedTask, sizeof(nonChangedTask));
 			}
 
 			numberOfCompletedSubtasks = 0;
