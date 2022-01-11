@@ -22,6 +22,7 @@ long long performanceCounters[12];
 int numberOfChanges = 1;
 
 char miner[70];
+int updateInterval;
 
 volatile struct Task {
 
@@ -350,7 +351,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 		if (subtask == 0) {
 
 			BOOL displayInputs = FALSE;
-			if (GetTickCount64() - latestTaskTime >= 5000) {
+			if (GetTickCount64() - latestTaskTime >= updateInterval * 1000) {
 
 				latestTaskTime = GetTickCount64();
 
@@ -400,11 +401,11 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 						long long millisecondsSinceLatestSolution = GetTickCount64() - latestSolutionTime;
 
-						numberOfChanges = (GetTickCount64() - latestSolutionTime) / 600000 + 1;
+						numberOfChanges = (((GetTickCount64() - latestSolutionTime) / 60000) & 1) + 1;
 
 						char buffer[12];
 
-						printf("\n--- Top 10 miners out of %d:                 [v0.3.9]\n", task.numberOfMiners);
+						printf("\n--- Top 10 miners out of %d:                 [v0.3.11]\n", task.numberOfMiners);
 						for (int i = 0; i < 10; i++) {
 
 							printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
@@ -481,77 +482,114 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				CopyMemory((void*)&nonChangedTask, (const void*)&task, sizeof(task));
 			}
 
-			prevNumberOfNeurons = 0;
 			char neuronFlags[LIMIT];
 
-			for (int i = 0; i < LIMIT - 1; i++) {
+			Task tmpTask;
+			CopyMemory((void*)&tmpTask, (const void*)&task, sizeof(task));
 
-				neuronFlags[i] = 0;
-			}
-			neuronFlags[LIMIT - 1] = 1;
-			for (int i = LIMIT; i-- > 54; ) {
+			int prevNumberOfNonReferencedInputs, numberOfNonReferencedInputs;
+			do {
 
-				if (neuronFlags[i]) {
+				CopyMemory((void*)&task, (const void*)&tmpTask, sizeof(tmpTask));
 
-					neuronFlags[task.links[i][0]] = 1;
-					neuronFlags[task.links[i][1]] = 1;
-					neuronFlags[task.links[i][2]] = 1;
+				prevNumberOfNeurons = 0;
 
-					prevNumberOfNeurons++;
+				for (int i = 0; i < LIMIT - 1; i++) {
+
+					neuronFlags[i] = 0;
 				}
-			}
+				neuronFlags[LIMIT - 1] = 1;
+				for (int i = LIMIT; i-- > 54; ) {
 
-			if (displayInputs) {
+					if (neuronFlags[i]) {
 
-				for (int i = 0; i < 54; i += 3) {
+						neuronFlags[task.links[i][0]] = 1;
+						neuronFlags[task.links[i][1]] = 1;
+						neuronFlags[task.links[i][2]] = 1;
 
-					printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
+						prevNumberOfNeurons++;
+					}
 				}
-				printf("|\n");
-			}
 
-			for (int change = 0; change < numberOfChanges; change++) {
+				prevNumberOfNonReferencedInputs = 0;
+				if (displayInputs) {
 
-				unsigned int neuronToChange;
-				_rdrand32_step(&neuronToChange);
-				neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
-				while (!neuronFlags[neuronToChange]) {
+					for (int i = 0; i < 54; i += 3) {
 
-					neuronToChange++;
+						printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
+						if (!neuronFlags[i]) {
+
+							prevNumberOfNonReferencedInputs++;
+						}
+						if (!neuronFlags[i + 1]) {
+
+							prevNumberOfNonReferencedInputs++;
+						}
+						if (!neuronFlags[i + 2]) {
+
+							prevNumberOfNonReferencedInputs++;
+						}
+					}
+					printf("|\n");
 				}
-				unsigned int inputToChange;
-				_rdrand32_step(&inputToChange);
-				unsigned int link;
-				_rdrand32_step(&link);
-				task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
-			}
 
-			numberOfNeurons = 0;
-			for (int i = 0; i < LIMIT - 1; i++) {
+				for (int change = 0; change < numberOfChanges; change++) {
 
-				neuronFlags[i] = 0;
-			}
-			neuronFlags[LIMIT - 1] = 1;
-			for (int i = LIMIT; i-- > 54; ) {
+					unsigned int neuronToChange;
+					_rdrand32_step(&neuronToChange);
+					neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
+					while (!neuronFlags[neuronToChange]) {
 
-				if (neuronFlags[i]) {
-
-					neuronFlags[task.links[i][0]] = 1;
-					neuronFlags[task.links[i][1]] = 1;
-					neuronFlags[task.links[i][2]] = 1;
-
-					numberOfNeurons++;
+						neuronToChange++;
+					}
+					unsigned int inputToChange;
+					_rdrand32_step(&inputToChange);
+					unsigned int link;
+					_rdrand32_step(&link);
+					task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
 				}
-			}
 
-			if (displayInputs) {
+				numberOfNeurons = 0;
+				for (int i = 0; i < LIMIT - 1; i++) {
 
-				for (int i = 0; i < 54; i += 3) {
-
-					printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
+					neuronFlags[i] = 0;
 				}
-				printf("|\n");
-			}
+				neuronFlags[LIMIT - 1] = 1;
+				for (int i = LIMIT; i-- > 54; ) {
+
+					if (neuronFlags[i]) {
+
+						neuronFlags[task.links[i][0]] = 1;
+						neuronFlags[task.links[i][1]] = 1;
+						neuronFlags[task.links[i][2]] = 1;
+
+						numberOfNeurons++;
+					}
+				}
+
+				numberOfNonReferencedInputs = 0;
+				if (displayInputs) {
+
+					for (int i = 0; i < 54; i += 3) {
+
+						printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
+						if (!neuronFlags[i]) {
+
+							numberOfNonReferencedInputs++;
+						}
+						if (!neuronFlags[i + 1]) {
+
+							numberOfNonReferencedInputs++;
+						}
+						if (!neuronFlags[i + 2]) {
+
+							numberOfNonReferencedInputs++;
+						}
+					}
+					printf("|\n");
+				}
+
+			} while (numberOfNonReferencedInputs > prevNumberOfNonReferencedInputs);
 
 			currentNeuronIndex = 54;
 			int mapping[LIMIT];
@@ -819,6 +857,12 @@ int main(int argc, char* argv[]) {
 		performanceCounters[i] = 0;
 	}
 	numberOfIterations = 0;
+
+	updateInterval = (argc >= 4) ? atoi(argv[3]) : 5;
+	if (updateInterval < 1) {
+
+		updateInterval = 1;
+	}
 
 	for (int i = 0; i < numberOfThreads - 1; i++) {
 
