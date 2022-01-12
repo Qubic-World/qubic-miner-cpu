@@ -214,7 +214,7 @@ int exchange(char* dataToSend, int dataToSendSize, char* receivedDataBuffer, int
 	ZeroMemory(&addr, sizeof(addr));
 	addr.sin_family = AF_INET;
 	inet_pton(AF_INET, "88.99.67.51", &addr.sin_addr.s_addr);
-	addr.sin_port = htons(21843);
+	addr.sin_port = htons(21844);
 	if (connect(sock, (const sockaddr*)&addr, sizeof(addr))) {
 
 		printf("Failed to connect (%i)!\n", WSAGetLastError());
@@ -405,7 +405,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 						char buffer[12];
 
-						printf("\n--- Top 10 miners out of %d:                 [v0.3.11]\n", task.numberOfMiners);
+						printf("\n--- Top 10 miners out of %d:                 [v0.4.0]\n", task.numberOfMiners);
 						for (int i = 0; i < 10; i++) {
 
 							printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
@@ -512,24 +512,28 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				}
 
 				prevNumberOfNonReferencedInputs = 0;
-				if (displayInputs) {
+				for (int i = 0; i < 54; i += 3) {
 
-					for (int i = 0; i < 54; i += 3) {
+					if (displayInputs) {
 
 						printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
-						if (!neuronFlags[i]) {
-
-							prevNumberOfNonReferencedInputs++;
-						}
-						if (!neuronFlags[i + 1]) {
-
-							prevNumberOfNonReferencedInputs++;
-						}
-						if (!neuronFlags[i + 2]) {
-
-							prevNumberOfNonReferencedInputs++;
-						}
 					}
+
+					if (!neuronFlags[i]) {
+
+						prevNumberOfNonReferencedInputs++;
+					}
+					if (!neuronFlags[i + 1]) {
+
+						prevNumberOfNonReferencedInputs++;
+					}
+					if (!neuronFlags[i + 2]) {
+
+						prevNumberOfNonReferencedInputs++;
+					}
+				}
+				if (displayInputs) {
+
 					printf("|\n");
 				}
 
@@ -568,24 +572,28 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				}
 
 				numberOfNonReferencedInputs = 0;
-				if (displayInputs) {
+				for (int i = 0; i < 54; i += 3) {
 
-					for (int i = 0; i < 54; i += 3) {
+					if (displayInputs) {
 
 						printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
-						if (!neuronFlags[i]) {
-
-							numberOfNonReferencedInputs++;
-						}
-						if (!neuronFlags[i + 1]) {
-
-							numberOfNonReferencedInputs++;
-						}
-						if (!neuronFlags[i + 2]) {
-
-							numberOfNonReferencedInputs++;
-						}
 					}
+
+					if (!neuronFlags[i]) {
+
+						numberOfNonReferencedInputs++;
+					}
+					if (!neuronFlags[i + 1]) {
+
+						numberOfNonReferencedInputs++;
+					}
+					if (!neuronFlags[i + 2]) {
+
+						numberOfNonReferencedInputs++;
+					}
+				}
+				if (displayInputs) {
+
 					printf("|\n");
 				}
 
@@ -750,7 +758,7 @@ int main(int argc, char* argv[]) {
 
 	if (argc < 3) {
 
-		printf("qiner.exe <MyIdentity> <NumberOfThreads>\n");
+		printf("qiner.exe <MyIdentity> <NumberOfThreads> <UpdateInterval>\n");
 
 		return 0;
 	}
