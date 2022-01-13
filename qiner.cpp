@@ -22,7 +22,6 @@ long long performanceCounters[12];
 int numberOfChanges = 1;
 
 char miner[70];
-int updateInterval;
 
 volatile struct Task {
 
@@ -34,7 +33,7 @@ volatile struct Task {
 	int numberOfErrors;
 	int links[LIMIT][3];
 
-} task, prevTask, prevPrevTask, nonChangedTask;
+} bestTask, task, prevTask, prevPrevTask, nonChangedTask;
 
 int links[LIMIT][3];
 
@@ -45,9 +44,9 @@ __declspec(align(32)) __m256i bWords[19683 / 243 / 3][27][3];
 __declspec(align(32)) __m256i cWords[19683][19683 / 243 / 3][3];
 
 int numberOfThreads;
-long long latestTaskTime = 0, latestSolutionTime;
+long long latestSolutionTime;
 
-CRITICAL_SECTION critSect;
+CRITICAL_SECTION taskCritSect, subtaskCritSect;
 volatile long long nextSubtask = 0, numberOfCompletedSubtasks = 0;
 volatile long long totalNumberOfErrors;
 volatile int prevNumberOfNeurons, numberOfNeurons, currentNeuronIndex;
@@ -302,7 +301,7 @@ DWORD WINAPI httpProc(LPVOID lpParameter) {
 
 			recv(clientSock, request, sizeof(request), 0);
 
-			CopyMemory(&response[134], (const void*)&task.links, sizeof(task.links));
+			CopyMemory(&response[134], (const void*)&bestTask.links, sizeof(bestTask.links));
 
 			char* dataToSend = response;
 			int dataToSendSize = sizeof(response);
@@ -333,13 +332,18 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 		values[27 + i][2] = bWords[0][i][2];
 	}
 
+	while (bestTask.numberOfErrors == 0x7FFFFFFF) {
+
+		Sleep(1);
+	}
+
 	while (TRUE) {
 
-		EnterCriticalSection(&critSect);
+		EnterCriticalSection(&subtaskCritSect);
 
 		if (nextSubtask == 19683) {
 
-			LeaveCriticalSection(&critSect);
+			LeaveCriticalSection(&subtaskCritSect);
 
 			Sleep(1);
 
@@ -350,137 +354,14 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 		if (subtask == 0) {
 
-			BOOL displayInputs = FALSE;
-			if (GetTickCount64() - latestTaskTime >= updateInterval * 1000) {
+			EnterCriticalSection(&taskCritSect);
+			if (bestTask.numberOfErrors < task.numberOfErrors) {
 
-				latestTaskTime = GetTickCount64();
-
-				while (TRUE) {
-
-					int prevNumberOfErrors = task.numberOfErrors;
-
-					char getTask[71];
-					getTask[0] = 0;
-					CopyMemory(&getTask[1], miner, 70);
-					Task poolTask;
-					if (exchange(getTask, sizeof(getTask), (char*)&poolTask, sizeof(poolTask)) != sizeof(poolTask)) {
-
-						printf("Failed to receive a task!\n");
-
-						Sleep(5000);
-					}
-					else {
-
-						if (poolTask.numberOfErrors < task.numberOfErrors) {
-
-							CopyMemory((void*)&task, (const void*)&poolTask, sizeof(poolTask));
-						}
-
-						CopyMemory((void*)&nonChangedTask, (const void*)&task, sizeof(task));
-
-						BOOL justChanged = FALSE;
-
-						if (prevNumberOfErrors > task.numberOfErrors) {
-
-							latestSolutionTime = GetTickCount64();
-
-							justChanged = TRUE;
-
-							if (prevNumberOfErrors == 0x7FFFFFFF) {
-
-								CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
-								CopyMemory((void*)&prevPrevTask, (void*)&task, sizeof(Task));
-
-								CreateThread(NULL, 0, httpProc, NULL, 0, NULL);
-							}
-							else {
-
-								numberOfAllErrors += prevNumberOfErrors - task.numberOfErrors;
-							}
-						}
-
-						long long millisecondsSinceLatestSolution = GetTickCount64() - latestSolutionTime;
-
-						numberOfChanges = (((GetTickCount64() - latestSolutionTime) / 60000) & 1) + 1;
-
-						char buffer[12];
-
-						printf("\n--- Top 10 miners out of %d:                 [v0.4.0]\n", task.numberOfMiners);
-						for (int i = 0; i < 10; i++) {
-
-							printf(" #%2d   *   %10.10s...   *   %12s", i + 1, task.topMiners[i], number(task.topMinerScores[i], buffer));
-							if (prevPrevTask.topMinerScores[i] == task.topMinerScores[i]) {
-
-								printf("\n");
-							}
-							else {
-
-								printf(" (increased by %s)\n", number(task.topMinerScores[i] - prevPrevTask.topMinerScores[i], buffer));
-							}
-						}
-						printf("---\n");
-						std::cout << InstructionSet::Brand() << std::endl;
-						printf("   %s[AVX2]   %s[AVX512CD]   %s[AVX512ER]   %s[AVX512F]   %s[AVX512PF]\n", InstructionSet::AVX2() ? "+" : "-", InstructionSet::AVX512CD() ? "+" : "-", InstructionSet::AVX512ER() ? "+" : "-", InstructionSet::AVX512F() ? "+" : "-", InstructionSet::AVX512PF() ? "+" : "-");
-						printf("---\n");
-						printf("You are #%d with %s found solutions", task.currentMinerPlace, number(task.currentMinerScore, buffer));
-						if (prevPrevTask.currentMinerScore == task.currentMinerScore) {
-
-							printf("\n");
-						}
-						else {
-
-							printf(" (increased by %s)\n", number(task.currentMinerScore - prevPrevTask.currentMinerScore, buffer));
-						}
-
-						long long totalNumberOfIterations = 0;
-						for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]); i++) {
-
-							totalNumberOfIterations += performanceCounters[i];
-						}
-						FILETIME currentTimestamp;
-						GetSystemTimePreciseAsFileTime(&currentTimestamp);
-						long long latestNumberOfIterations = numberOfIterations;
-						numberOfIterations = 0;
-						ULARGE_INTEGER s, f;
-						memcpy(&s, &performanceTimestamps[0], sizeof(ULARGE_INTEGER));
-						memcpy(&f, &currentTimestamp, sizeof(ULARGE_INTEGER));
-						totalNumberOfIterations += latestNumberOfIterations;
-						for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1; i++) {
-
-							CopyMemory(&performanceTimestamps[i], &performanceTimestamps[i + 1], sizeof(performanceTimestamps[0]));
-							performanceCounters[i] = performanceCounters[i + 1];
-						}
-						CopyMemory(&performanceTimestamps[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1], &currentTimestamp, sizeof(performanceTimestamps[0]));
-						performanceCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfIterations;
-						SYSTEM_INFO systemInfo;
-						GetNativeSystemInfo(&systemInfo);
-						printf("Your iteration rate is %.3f iterations/s (%d/%d threads, %d changes)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, systemInfo.dwNumberOfProcessors, numberOfChanges);
-
-						double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
-						printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations)\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
-						printf("Remaining pool error elimination rate is ~%.3f errors/h\n", numberOfAllErrors * 3600 / delta);
-						printf("");
-						printf("---\n");
-
-						if (justChanged) {
-
-							CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
-							CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
-						}
-
-						char buffer2[16];
-						printf("There are %s errors left (decreased by %s) (at least %02d:%02d:%02d since latest solution)\n\n", number(task.numberOfErrors, buffer), number(prevPrevTask.numberOfErrors - task.numberOfErrors, buffer2), millisecondsSinceLatestSolution / 3600000, millisecondsSinceLatestSolution % 3600000 / 60000, millisecondsSinceLatestSolution % 60000 / 1000);
-
-						displayInputs = TRUE;
-
-						break;
-					}
-				}
+				CopyMemory((void*)&task, (const void*)&bestTask, sizeof(bestTask));
 			}
-			else {
+			LeaveCriticalSection(&taskCritSect);
 
-				CopyMemory((void*)&nonChangedTask, (const void*)&task, sizeof(task));
-			}
+			CopyMemory((void*)&nonChangedTask, (const void*)&task, sizeof(task));
 
 			char neuronFlags[LIMIT];
 
@@ -514,11 +395,6 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				prevNumberOfNonReferencedInputs = 0;
 				for (int i = 0; i < 54; i += 3) {
 
-					if (displayInputs) {
-
-						printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
-					}
-
 					if (!neuronFlags[i]) {
 
 						prevNumberOfNonReferencedInputs++;
@@ -531,10 +407,6 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 						prevNumberOfNonReferencedInputs++;
 					}
-				}
-				if (displayInputs) {
-
-					printf("|\n");
 				}
 
 				for (int change = 0; change < numberOfChanges; change++) {
@@ -574,11 +446,6 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				numberOfNonReferencedInputs = 0;
 				for (int i = 0; i < 54; i += 3) {
 
-					if (displayInputs) {
-
-						printf("|%s%s%s", neuronFlags[i] ? " " : "X", neuronFlags[i + 1] ? " " : "X", neuronFlags[i + 2] ? " " : "X");
-					}
-
 					if (!neuronFlags[i]) {
 
 						numberOfNonReferencedInputs++;
@@ -591,10 +458,6 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 						numberOfNonReferencedInputs++;
 					}
-				}
-				if (displayInputs) {
-
-					printf("|\n");
 				}
 
 			} while (numberOfNonReferencedInputs > prevNumberOfNonReferencedInputs);
@@ -619,7 +482,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			totalNumberOfErrors = 0;
 		}
 
-		LeaveCriticalSection(&critSect);
+		LeaveCriticalSection(&subtaskCritSect);
 
 		for (int i = 0; i < 27; i++) {
 
@@ -695,7 +558,6 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 			InterlockedIncrement64(&numberOfIterations);
 
-			BOOL improved = totalNumberOfErrors < task.numberOfErrors ? TRUE : FALSE;
 			if (totalNumberOfErrors <= task.numberOfErrors) {
 
 				if (totalNumberOfErrors < task.numberOfErrors) {
@@ -707,7 +569,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					InterlockedIncrement64(&numberOf0Elimitations);
 				}
 
-				if (totalNumberOfErrors <= task.numberOfErrors) {
+				if (totalNumberOfErrors < task.numberOfErrors) {
 
 					struct Solution {
 
@@ -723,23 +585,17 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					CopyMemory(solution.links, (const void*)task.links, sizeof(solution.links));
 					if (exchange((char*)&solution, sizeof(solution), NULL, 0) < 0) {
 
-						if (totalNumberOfErrors < task.numberOfErrors) {
-
-							printf("Failed to send a solution!\n");
-						}
+						printf("Failed to send a solution!\n");
 					}
 					else {
 
-						if (totalNumberOfErrors < task.numberOfErrors) {
+						char buffer[16], buffer2[16], buffer3[16];
+						printf("%s: Found a solution reducing number of errors by %s (%s -> %s neurons)\n\n", lpParameter ? "AVX-512" : "AVX2", number(task.numberOfErrors - totalNumberOfErrors, buffer), number(prevNumberOfNeurons, buffer2), number(numberOfNeurons, buffer3));
 
-							char buffer[16], buffer2[16], buffer3[16];
-							printf("%s: Found a solution reducing number of errors by %s (%s -> %s neurons)\n\n", lpParameter ? "AVX-512" : "AVX2", number(task.numberOfErrors - totalNumberOfErrors, buffer), number(prevNumberOfNeurons, buffer2), number(numberOfNeurons, buffer3));
-
-							CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
-							CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
-							task.numberOfErrors = totalNumberOfErrors;
-							latestSolutionTime = GetTickCount64();
-						}
+						CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
+						CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
+						task.numberOfErrors = totalNumberOfErrors;
+						latestSolutionTime = GetTickCount64();
 					}
 				}
 			}
@@ -853,9 +709,10 @@ int main(int argc, char* argv[]) {
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-	InitializeCriticalSection(&critSect);
+	InitializeCriticalSection(&taskCritSect);
+	InitializeCriticalSection(&subtaskCritSect);
 
-	task.numberOfErrors = 0x7FFFFFFF;
+	task.numberOfErrors = bestTask.numberOfErrors = 0x7FFFFFFF;
 	numberOfThreads = atoi(argv[2]);
 	latestSolutionTime = GetTickCount64();
 
@@ -866,16 +723,139 @@ int main(int argc, char* argv[]) {
 	}
 	numberOfIterations = 0;
 
-	updateInterval = (argc >= 4) ? atoi(argv[3]) : 5;
+	int updateInterval = (argc >= 4) ? atoi(argv[3]) : 5;
 	if (updateInterval < 1) {
 
 		updateInterval = 1;
 	}
 
-	for (int i = 0; i < numberOfThreads - 1; i++) {
+	for (int i = 0; i < numberOfThreads; i++) {
 
 		CreateThread(NULL, 2 * 1024 * 1024, miningProc, (LPVOID)InstructionSet::AVX512F(), 0, NULL);
 	}
 
-	miningProc((LPVOID)InstructionSet::AVX512F());
+	while (TRUE) {
+
+		while (TRUE) {
+
+			int prevNumberOfErrors = bestTask.numberOfErrors;
+
+			char getTask[71];
+			getTask[0] = 0;
+			CopyMemory(&getTask[1], miner, 70);
+			Task poolTask;
+			if (exchange(getTask, sizeof(getTask), (char*)&poolTask, sizeof(poolTask)) != sizeof(poolTask)) {
+
+				printf("Failed to receive a task!\n");
+
+				Sleep(5000);
+			}
+			else {
+
+				EnterCriticalSection(&taskCritSect);
+				if (poolTask.numberOfErrors < bestTask.numberOfErrors) {
+
+					CopyMemory((void*)&bestTask, (const void*)&poolTask, sizeof(poolTask));
+				}
+				LeaveCriticalSection(&taskCritSect);
+
+				BOOL justChanged = FALSE;
+
+				if (prevNumberOfErrors > bestTask.numberOfErrors) {
+
+					latestSolutionTime = GetTickCount64();
+
+					justChanged = TRUE;
+
+					if (prevNumberOfErrors == 0x7FFFFFFF) {
+
+						CopyMemory((void*)&prevTask, (void*)&bestTask, sizeof(Task));
+						CopyMemory((void*)&prevPrevTask, (void*)&bestTask, sizeof(Task));
+
+						CreateThread(NULL, 0, httpProc, NULL, 0, NULL);
+					}
+					else {
+
+						numberOfAllErrors += prevNumberOfErrors - bestTask.numberOfErrors;
+					}
+				}
+
+				long long millisecondsSinceLatestSolution = GetTickCount64() - latestSolutionTime;
+
+				numberOfChanges = (((GetTickCount64() - latestSolutionTime) / 60000) & 1) + 1;
+
+				char buffer[12];
+
+				printf("\n--- Top 10 miners out of %d:                 [v0.4.1]\n", bestTask.numberOfMiners);
+				for (int i = 0; i < 10; i++) {
+
+					printf(" #%2d   *   %10.10s...   *   %12s", i + 1, bestTask.topMiners[i], number(bestTask.topMinerScores[i], buffer));
+					if (prevPrevTask.topMinerScores[i] == bestTask.topMinerScores[i]) {
+
+						printf("\n");
+					}
+					else {
+
+						printf(" (increased by %s)\n", number(bestTask.topMinerScores[i] - prevPrevTask.topMinerScores[i], buffer));
+					}
+				}
+				printf("---\n");
+				std::cout << InstructionSet::Brand() << std::endl;
+				printf("   %s[AVX2]   %s[AVX512CD]   %s[AVX512ER]   %s[AVX512F]   %s[AVX512PF]\n", InstructionSet::AVX2() ? "+" : "-", InstructionSet::AVX512CD() ? "+" : "-", InstructionSet::AVX512ER() ? "+" : "-", InstructionSet::AVX512F() ? "+" : "-", InstructionSet::AVX512PF() ? "+" : "-");
+				printf("---\n");
+				printf("You are #%d with %s found solutions", bestTask.currentMinerPlace, number(bestTask.currentMinerScore, buffer));
+				if (prevPrevTask.currentMinerScore == bestTask.currentMinerScore) {
+
+					printf("\n");
+				}
+				else {
+
+					printf(" (increased by %s)\n", number(bestTask.currentMinerScore - prevPrevTask.currentMinerScore, buffer));
+				}
+
+				long long totalNumberOfIterations = 0;
+				for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]); i++) {
+
+					totalNumberOfIterations += performanceCounters[i];
+				}
+				FILETIME currentTimestamp;
+				GetSystemTimePreciseAsFileTime(&currentTimestamp);
+				long long latestNumberOfIterations = numberOfIterations;
+				numberOfIterations = 0;
+				ULARGE_INTEGER s, f;
+				memcpy(&s, &performanceTimestamps[0], sizeof(ULARGE_INTEGER));
+				memcpy(&f, &currentTimestamp, sizeof(ULARGE_INTEGER));
+				totalNumberOfIterations += latestNumberOfIterations;
+				for (int i = 0; i < sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1; i++) {
+
+					CopyMemory(&performanceTimestamps[i], &performanceTimestamps[i + 1], sizeof(performanceTimestamps[0]));
+					performanceCounters[i] = performanceCounters[i + 1];
+				}
+				CopyMemory(&performanceTimestamps[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1], &currentTimestamp, sizeof(performanceTimestamps[0]));
+				performanceCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfIterations;
+				SYSTEM_INFO systemInfo;
+				GetNativeSystemInfo(&systemInfo);
+				printf("Your iteration rate is %.3f iterations/s (%d/%d threads, %d changes)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, systemInfo.dwNumberOfProcessors, numberOfChanges);
+
+				double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
+				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations)\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
+				printf("Remaining pool error elimination rate is ~%.3f errors/h\n", numberOfAllErrors * 3600 / delta);
+				printf("");
+				printf("---\n");
+
+				if (justChanged) {
+
+					CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
+					CopyMemory((void*)&prevTask, (void*)&bestTask, sizeof(Task));
+				}
+
+				char buffer2[16];
+				printf("There are %s errors left (decreased by %s) (at least %02d:%02d:%02d since latest solution)\n\n", number(bestTask.numberOfErrors, buffer), number(prevPrevTask.numberOfErrors - bestTask.numberOfErrors, buffer2), millisecondsSinceLatestSolution / 3600000, millisecondsSinceLatestSolution % 3600000 / 60000, millisecondsSinceLatestSolution % 60000 / 1000);
+
+				break;
+			}
+		}
+
+		Sleep(updateInterval * 1000);
+	}
 }
