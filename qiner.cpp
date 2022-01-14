@@ -19,8 +19,6 @@ long long numberOfAllErrors = 0;
 FILETIME performanceTimestamps[12];
 long long performanceCounters[12];
 
-int numberOfChanges = 1;
-
 char miner[70];
 
 volatile struct Task {
@@ -50,6 +48,11 @@ CRITICAL_SECTION taskCritSect, subtaskCritSect;
 volatile long long nextSubtask = 0, numberOfCompletedSubtasks = 0;
 volatile long long totalNumberOfErrors;
 volatile int prevNumberOfNeurons, numberOfNeurons, currentNeuronIndex;
+
+int retro;
+int neuronScores[LIMIT];
+int totalNeuronScore = 0;
+unsigned int changedNeuron;
 
 class InstructionSet
 {
@@ -301,7 +304,7 @@ DWORD WINAPI httpProc(LPVOID lpParameter) {
 
 			recv(clientSock, request, sizeof(request), 0);
 
-			CopyMemory(&response[134], (const void*)&bestTask.links, sizeof(bestTask.links));
+			CopyMemory(&response[134], (const void*)&task.links, sizeof(task.links));
 
 			char* dataToSend = response;
 			int dataToSendSize = sizeof(response);
@@ -409,21 +412,32 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					}
 				}
 
-				for (int change = 0; change < numberOfChanges; change++) {
+				unsigned int random;
+				_rdrand32_step(&random);
+				if (random % retro == 0 && totalNeuronScore) {
 
-					unsigned int neuronToChange;
-					_rdrand32_step(&neuronToChange);
-					neuronToChange = (neuronToChange % (LIMIT - 54)) + 54;
-					while (!neuronFlags[neuronToChange]) {
+					_rdrand32_step(&random);
+					random %= totalNeuronScore;
+					changedNeuron = 54;
+					while (random >= neuronScores[changedNeuron]) {
 
-						neuronToChange++;
+						random -= neuronScores[changedNeuron++];
 					}
-					unsigned int inputToChange;
-					_rdrand32_step(&inputToChange);
-					unsigned int link;
-					_rdrand32_step(&link);
-					task.links[neuronToChange][inputToChange % 3] = link % neuronToChange;
 				}
+				else {
+
+					_rdrand32_step(&changedNeuron);
+					changedNeuron = (changedNeuron % (LIMIT - 54)) + 54;
+				}
+				while (!neuronFlags[changedNeuron]) {
+
+					changedNeuron++;
+				}
+				unsigned int inputToChange;
+				_rdrand32_step(&inputToChange);
+				unsigned int link;
+				_rdrand32_step(&link);
+				task.links[changedNeuron][inputToChange % 3] = link % changedNeuron;
 
 				numberOfNeurons = 0;
 				for (int i = 0; i < LIMIT - 1; i++) {
@@ -563,6 +577,9 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 				if (totalNumberOfErrors < task.numberOfErrors) {
 
 					InterlockedAdd64(&numberOfOwnErrors, task.numberOfErrors - totalNumberOfErrors);
+
+					neuronScores[changedNeuron]++;
+					totalNeuronScore++;
 				}
 				else {
 
@@ -590,7 +607,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					else {
 
 						char buffer[16], buffer2[16], buffer3[16];
-						printf("%s: Found a solution reducing number of errors by %s (%s -> %s neurons)\n\n", lpParameter ? "AVX-512" : "AVX2", number(task.numberOfErrors - totalNumberOfErrors, buffer), number(prevNumberOfNeurons, buffer2), number(numberOfNeurons, buffer3));
+						printf("\n%s: Found a solution reducing number of errors by %s (%s -> %s neurons)\n\n", lpParameter ? "AVX-512" : "AVX2", number(task.numberOfErrors - totalNumberOfErrors, buffer), number(prevNumberOfNeurons, buffer2), number(numberOfNeurons, buffer3));
 
 						CopyMemory((void*)&prevPrevTask, (void*)&prevTask, sizeof(Task));
 						CopyMemory((void*)&prevTask, (void*)&task, sizeof(Task));
@@ -614,9 +631,14 @@ int main(int argc, char* argv[]) {
 
 	if (argc < 3) {
 
-		printf("qiner.exe <MyIdentity> <NumberOfThreads> <UpdateInterval>\n");
+		printf("qiner.exe <MyIdentity> <NumberOfThreads> <UpdateInterval> <Retro>\n");
 
 		return 0;
+	}
+
+	for (int i = 0; i < LIMIT; i++) {
+
+		neuronScores[i] = 0;
 	}
 
 	__declspec(align(32)) __m256i flags[243];
@@ -729,6 +751,8 @@ int main(int argc, char* argv[]) {
 		updateInterval = 1;
 	}
 
+	retro = (argc >= 5) ? atoi(argv[4]) : 1000000;
+
 	for (int i = 0; i < numberOfThreads; i++) {
 
 		CreateThread(NULL, 2 * 1024 * 1024, miningProc, (LPVOID)InstructionSet::AVX512F(), 0, NULL);
@@ -782,11 +806,9 @@ int main(int argc, char* argv[]) {
 
 				long long millisecondsSinceLatestSolution = GetTickCount64() - latestSolutionTime;
 
-				numberOfChanges = (((GetTickCount64() - latestSolutionTime) / 60000) & 1) + 1;
-
 				char buffer[12];
 
-				printf("\n--- Top 10 miners out of %d:                 [v0.4.1]\n", bestTask.numberOfMiners);
+				printf("\n\n--- Top 10 out of %d:                 [v0.4.2]\n", bestTask.numberOfMiners);
 				for (int i = 0; i < 10; i++) {
 
 					printf(" #%2d   *   %10.10s...   *   %12s", i + 1, bestTask.topMiners[i], number(bestTask.topMinerScores[i], buffer));
@@ -835,7 +857,7 @@ int main(int argc, char* argv[]) {
 				performanceCounters[sizeof(performanceCounters) / sizeof(performanceCounters[0]) - 1] = latestNumberOfIterations;
 				SYSTEM_INFO systemInfo;
 				GetNativeSystemInfo(&systemInfo);
-				printf("Your iteration rate is %.3f iterations/s (%d/%d threads, %d changes)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, systemInfo.dwNumberOfProcessors, numberOfChanges);
+				printf("Your iteration rate is %.3f iterations/s (%d/%d threads)\n", totalNumberOfIterations * 10000000 / ((double)(f.QuadPart - s.QuadPart)), numberOfThreads, systemInfo.dwNumberOfProcessors);
 
 				double delta = ((double)(GetTickCount64() - launchTime)) / 1000;
 				printf("Your error elimination rate is ~%.3f errors/h (%s zero eliminations)\n", numberOfOwnErrors * 3600 / delta, number(numberOf0Elimitations, buffer));
@@ -851,6 +873,14 @@ int main(int argc, char* argv[]) {
 
 				char buffer2[16];
 				printf("There are %s errors left (decreased by %s) (at least %02d:%02d:%02d since latest solution)\n\n", number(bestTask.numberOfErrors, buffer), number(prevPrevTask.numberOfErrors - bestTask.numberOfErrors, buffer2), millisecondsSinceLatestSolution / 3600000, millisecondsSinceLatestSolution % 3600000 / 60000, millisecondsSinceLatestSolution % 60000 / 1000);
+
+				for (int i = 0; i < LIMIT; i++) {
+
+					if (neuronScores[i] > 0) {
+
+						printf("#%i (x%i)   ", i, neuronScores[i]);
+					}
+				}
 
 				break;
 			}
