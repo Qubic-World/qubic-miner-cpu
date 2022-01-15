@@ -49,9 +49,8 @@ volatile long long nextSubtask = 0, numberOfCompletedSubtasks = 0;
 volatile long long totalNumberOfErrors;
 volatile int prevNumberOfNeurons, numberOfNeurons, currentNeuronIndex;
 
-int retro;
+int nextScoredNeuron = LIMIT - 1;
 int neuronScores[LIMIT];
-int totalNeuronScore = 0;
 unsigned int changedNeuron;
 
 class InstructionSet
@@ -361,6 +360,7 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			if (bestTask.numberOfErrors < task.numberOfErrors) {
 
 				CopyMemory((void*)&task, (const void*)&bestTask, sizeof(bestTask));
+				nextScoredNeuron = LIMIT - 1;
 			}
 			LeaveCriticalSection(&taskCritSect);
 
@@ -412,17 +412,13 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					}
 				}
 
-				unsigned int random;
-				_rdrand32_step(&random);
-				if (random % retro == 0 && totalNeuronScore) {
+				while (nextScoredNeuron >= 54 && !neuronScores[nextScoredNeuron]) {
 
-					_rdrand32_step(&random);
-					random %= totalNeuronScore;
-					changedNeuron = 54;
-					while (random >= neuronScores[changedNeuron]) {
+					nextScoredNeuron--;
+				}
+				if (nextScoredNeuron >= 54) {
 
-						random -= neuronScores[changedNeuron++];
-					}
+					changedNeuron = nextScoredNeuron--;
 				}
 				else {
 
@@ -574,12 +570,13 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 			if (totalNumberOfErrors <= task.numberOfErrors) {
 
+				nextScoredNeuron = LIMIT - 1;
+
 				if (totalNumberOfErrors < task.numberOfErrors) {
 
 					InterlockedAdd64(&numberOfOwnErrors, task.numberOfErrors - totalNumberOfErrors);
 
 					neuronScores[changedNeuron]++;
-					totalNeuronScore++;
 				}
 				else {
 
@@ -631,7 +628,7 @@ int main(int argc, char* argv[]) {
 
 	if (argc < 3) {
 
-		printf("qiner.exe <MyIdentity> <NumberOfThreads> <UpdateInterval> <Retro>\n");
+		printf("qiner.exe <MyIdentity> <NumberOfThreads> <UpdateInterval>\n");
 
 		return 0;
 	}
@@ -751,8 +748,6 @@ int main(int argc, char* argv[]) {
 		updateInterval = 1;
 	}
 
-	retro = (argc >= 5) ? atoi(argv[4]) : 1000000;
-
 	for (int i = 0; i < numberOfThreads; i++) {
 
 		CreateThread(NULL, 2 * 1024 * 1024, miningProc, (LPVOID)InstructionSet::AVX512F(), 0, NULL);
@@ -808,7 +803,7 @@ int main(int argc, char* argv[]) {
 
 				char buffer[12];
 
-				printf("\n\n--- Top 10 out of %d:                 [v0.4.2]\n", bestTask.numberOfMiners);
+				printf("\n\n--- Top 10 out of %d:                 [v0.4.3]\n", bestTask.numberOfMiners);
 				for (int i = 0; i < 10; i++) {
 
 					printf(" #%2d   *   %10.10s...   *   %12s", i + 1, bestTask.topMiners[i], number(bestTask.topMinerScores[i], buffer));
