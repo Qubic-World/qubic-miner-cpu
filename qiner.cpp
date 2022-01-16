@@ -570,12 +570,11 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 
 			if (totalNumberOfErrors <= task.numberOfErrors) {
 
-				nextScoredNeuron = LIMIT - 1;
-
 				if (totalNumberOfErrors < task.numberOfErrors) {
 
 					InterlockedAdd64(&numberOfOwnErrors, task.numberOfErrors - totalNumberOfErrors);
 
+					nextScoredNeuron = LIMIT - 1;
 					neuronScores[changedNeuron]++;
 				}
 				else {
@@ -803,7 +802,7 @@ int main(int argc, char* argv[]) {
 
 				char buffer[12];
 
-				printf("\n\n--- Top 10 out of %d:                 [v0.4.3]\n", bestTask.numberOfMiners);
+				printf("\n\n--- Top 10 out of %d:                 [v0.4.4]\n", bestTask.numberOfMiners);
 				for (int i = 0; i < 10; i++) {
 
 					printf(" #%2d   *   %10.10s...   *   %12s", i + 1, bestTask.topMiners[i], number(bestTask.topMinerScores[i], buffer));
