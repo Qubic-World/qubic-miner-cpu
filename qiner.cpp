@@ -412,7 +412,8 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 					}
 				}
 
-				while (nextScoredNeuron >= 54 && !neuronScores[nextScoredNeuron]) {
+				while ((nextScoredNeuron >= 54 && !neuronScores[nextScoredNeuron])
+					|| !neuronFlags[nextScoredNeuron]) {
 
 					nextScoredNeuron--;
 				}
@@ -615,6 +616,11 @@ DWORD WINAPI miningProc(LPVOID lpParameter) {
 			else {
 
 				CopyMemory((void*)&task, (const void*)&nonChangedTask, sizeof(nonChangedTask));
+
+				if (neuronScores[changedNeuron]) {
+
+					neuronScores[changedNeuron]--;
+				}
 			}
 
 			numberOfCompletedSubtasks = 0;
