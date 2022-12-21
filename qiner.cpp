@@ -4,7 +4,7 @@
 #define SOLUTION_THRESHOLD 28
 #define VERSION_A 1
 #define VERSION_B 73
-#define VERSION_C 0
+#define VERSION_C 1
 
 #include <intrin.h>
 #include <stdio.h>
@@ -2238,6 +2238,7 @@ static unsigned long long miningData[65536];
 static unsigned char minerPublicKey[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static unsigned char nonce[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static volatile long long numberOfMiningIterations = 0;
+static volatile long long numberOfFoundSolutions = 0;
 
 BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
 {
@@ -2322,6 +2323,7 @@ DWORD WINAPI miningThreadProc(LPVOID)
                     Sleep(1);
                 }
                 *((__m256i*)::nonce) = *((__m256i*)nonce);
+                _InterlockedIncrement64(&numberOfFoundSolutions);
             }
 
             _InterlockedIncrement64(&numberOfMiningIterations);
@@ -2479,7 +2481,7 @@ int main(int argc, char* argv[])
                 }
                 id[70] = 0;
 
-                printf("%d it/s (%s).\n", (numberOfMiningIterations - prevNumberOfMiningIterations) * 1000 / delta, id);
+                printf("%d it/s (found %d solutions) (%s).\n", (numberOfMiningIterations - prevNumberOfMiningIterations) * 1000 / delta, numberOfFoundSolutions, id);
                 prevNumberOfMiningIterations = numberOfMiningIterations;
                 timestamp = GetTickCount64();
             }
