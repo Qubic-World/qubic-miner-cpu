@@ -3,8 +3,8 @@
 #define PORT 21841
 #define SOLUTION_THRESHOLD 28
 #define VERSION_A 1
-#define VERSION_B 73
-#define VERSION_C 1
+#define VERSION_B 74
+#define VERSION_C 0
 
 #include <intrin.h>
 #include <stdio.h>
@@ -2369,7 +2369,7 @@ int main(int argc, char* argv[])
 {
     printf("Qiner %d.%d.%d is launched.\n", VERSION_A, VERSION_B, VERSION_C);
 
-    if (argc < 3)
+    if (argc < 2)
     {
         printf("The IP address is not specified!\n");
     }
@@ -2377,7 +2377,7 @@ int main(int argc, char* argv[])
     {
         unsigned char randomSeed[32];
         ZeroMemory(randomSeed, 32);
-        randomSeed[0] = 22;
+        randomSeed[0] = 128;
         randomSeed[1] = 80;
         randomSeed[2] = 115;
         randomSeed[3] = 3;
@@ -2389,7 +2389,19 @@ int main(int argc, char* argv[])
 
         SetConsoleCtrlHandler(ctrlCHandlerRoutine, TRUE);
 
-        for (unsigned int i = atoi(argv[2]); i-- > 0; )
+        unsigned int numberOfThreads;
+        if (argc < 3)
+        {
+            SYSTEM_INFO systemInfo;
+            GetSystemInfo(&systemInfo);
+            numberOfThreads = systemInfo.dwNumberOfProcessors;
+        }
+        else
+        {
+            numberOfThreads = atoi(argv[2]);
+        }
+        printf("%d threads are used.\n", numberOfThreads);
+        for (unsigned int i = numberOfThreads; i-- > 0; )
         {
             CreateThread(NULL, 0, miningThreadProc, NULL, 0, NULL);
         }
@@ -2451,6 +2463,7 @@ int main(int argc, char* argv[])
                             *((__m256i*)packet.payload.nonce) = *((__m256i*)nonce);
                             if (sendData(serverSocket, (char*)&packet, packet.header.size))
                             {
+                                *((__m256i*)minerPublicKey) = ZERO;
                                 *((__m256i*)nonce) = ZERO;
                             }
                         }
