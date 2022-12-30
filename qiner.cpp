@@ -1,9 +1,9 @@
 #define AVX512 0
-#define NUMBER_OF_NEURONS 19000
+#define NUMBER_OF_NEURONS 20000
 #define PORT 21841
-#define SOLUTION_THRESHOLD 28
+#define SOLUTION_THRESHOLD 29
 #define VERSION_A 1
-#define VERSION_B 75
+#define VERSION_B 76
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2380,8 +2380,8 @@ int main(int argc, char* argv[])
         randomSeed[0] = 128;
         randomSeed[1] = 80;
         randomSeed[2] = 115;
-        randomSeed[3] = 3;
-        randomSeed[4] = 212;
+        randomSeed[3] = 130;
+        randomSeed[4] = 112;
         randomSeed[5] = 249;
         randomSeed[6] = 70;
         randomSeed[7] = 112;
