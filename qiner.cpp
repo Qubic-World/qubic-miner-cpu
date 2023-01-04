@@ -1,9 +1,9 @@
 #define AVX512 0
-#define NUMBER_OF_NEURONS 20000
+#define NUMBER_OF_NEURONS 65536
 #define PORT 21841
 #define SOLUTION_THRESHOLD 29
 #define VERSION_A 1
-#define VERSION_B 76
+#define VERSION_B 77
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2265,11 +2265,11 @@ DWORD WINAPI miningThreadProc(LPVOID)
             _rdrand64_step((unsigned long long*)&nonce[16]);
             _rdrand64_step((unsigned long long*)&nonce[24]);
             random(minerPublicKey, nonce, (unsigned char*)neuronLinks, sizeof(neuronLinks));
-            for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+            /*for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
             {
                 neuronLinks[i][0] %= NUMBER_OF_NEURONS;
                 neuronLinks[i][1] %= NUMBER_OF_NEURONS;
-            }
+            }*/
             memset(neuronValues, 0xFF, sizeof(neuronValues));
 
             unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
@@ -2351,7 +2351,8 @@ bool sendData(SOCKET serverSocket, char* buffer, unsigned int size)
 
 bool receiveData(SOCKET serverSocket, char* buffer, unsigned int size)
 {
-    while (size)
+    const unsigned long long beginningTime = GetTickCount64();
+    while (size && GetTickCount64() - beginningTime <= 2000)
     {
         int numberOfBytes;
         if ((numberOfBytes = recv(serverSocket, buffer, size, 0)) <= 0)
@@ -2382,8 +2383,8 @@ int main(int argc, char* argv[])
         randomSeed[2] = 115;
         randomSeed[3] = 130;
         randomSeed[4] = 112;
-        randomSeed[5] = 249;
-        randomSeed[6] = 70;
+        randomSeed[5] = 88;
+        randomSeed[6] = 16;
         randomSeed[7] = 112;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
@@ -2433,7 +2434,7 @@ int main(int argc, char* argv[])
                     }
                     else
                     {
-                        DWORD value = 1000;
+                        DWORD value = 2000;
                         setsockopt(serverSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&value, sizeof(value));
                         setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&value, sizeof(value));
 
