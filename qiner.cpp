@@ -3,7 +3,7 @@
 #define PORT 21841
 #define SOLUTION_THRESHOLD 29
 #define VERSION_A 1
-#define VERSION_B 83
+#define VERSION_B 84
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2378,14 +2378,14 @@ int main(int argc, char* argv[])
     {
         unsigned char randomSeed[32];
         ZeroMemory(randomSeed, 32);
-        randomSeed[0] = 17;
+        randomSeed[0] = 19;
         randomSeed[1] = 87;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
         randomSeed[4] = 132;
         randomSeed[5] = 86;
-        randomSeed[6] = 16;
-        randomSeed[7] = 111;
+        randomSeed[6] = 13;
+        randomSeed[7] = 101;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         SetConsoleCtrlHandler(ctrlCHandlerRoutine, TRUE);
@@ -2483,21 +2483,26 @@ int main(int argc, char* argv[])
             unsigned long long delta = GetTickCount64() - timestamp;
             if (delta >= 1000)
             {
-                unsigned char id[70 + 1];
+                unsigned char id[60 + 1];
 
-                for (int i = 0; i < 32; i++)
+                for (int i = 0; i < 4; i++)
                 {
-                    id[i << 1] = (minerPublicKey[i] >> 4) + L'A';
-                    id[(i << 1) + 1] = (minerPublicKey[i] & 0xF) + L'A';
+                    unsigned long long publicKeyFragment = *((unsigned long long*)&minerPublicKey[i << 3]);
+                    for (int j = 0; j < 14; j++)
+                    {
+                        id[i * 14 + j] = publicKeyFragment % 26 + 'A';
+                        publicKeyFragment /= 26;
+                    }
                 }
-                unsigned char idBytesChecksum[3];
-                KangarooTwelve(minerPublicKey, 32, idBytesChecksum, sizeof(idBytesChecksum));
-                for (int i = 0; i < sizeof(idBytesChecksum); i++)
+                unsigned int identityBytesChecksum;
+                KangarooTwelve(minerPublicKey, 32, (unsigned char*)&identityBytesChecksum, 3);
+                identityBytesChecksum &= 0x3FFFF;
+                for (int i = 0; i < 4; i++)
                 {
-                    id[64 + (i << 1)] = (idBytesChecksum[i] >> 4) + L'A';
-                    id[65 + (i << 1)] = (idBytesChecksum[i] & 0xF) + L'A';
+                    id[56 + i] = identityBytesChecksum % 26 + 'A';
+                    identityBytesChecksum /= 26;
                 }
-                id[70] = 0;
+                id[60] = 0;
 
                 SYSTEMTIME systemTime;
                 GetSystemTime(&systemTime);
