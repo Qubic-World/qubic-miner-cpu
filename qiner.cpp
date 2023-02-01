@@ -1,9 +1,9 @@
 #define AVX512 0
-#define NUMBER_OF_NEURONS 20000
+#define NUMBER_OF_NEURONS 262144
 #define PORT 21841
 #define SOLUTION_THRESHOLD 29
 #define VERSION_A 1
-#define VERSION_B 84
+#define VERSION_B 85
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2250,8 +2250,8 @@ BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
 DWORD WINAPI miningThreadProc(LPVOID)
 {
     unsigned char nonce[32];
-    unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
-    unsigned char neuronValues[NUMBER_OF_NEURONS];
+    auto neuronLinks = new unsigned int [NUMBER_OF_NEURONS][2];
+    auto neuronValues = new unsigned char [NUMBER_OF_NEURONS];
     while (!state)
     {
         if (EQUAL(*((__m256i*)minerPublicKey), ZERO))
@@ -2329,6 +2329,7 @@ DWORD WINAPI miningThreadProc(LPVOID)
             _InterlockedIncrement64(&numberOfMiningIterations);
         }
     }
+    //"delete" is not really needed, let the OS handle it
 
     return 0;
 }
@@ -2378,7 +2379,7 @@ int main(int argc, char* argv[])
     {
         unsigned char randomSeed[32];
         ZeroMemory(randomSeed, 32);
-        randomSeed[0] = 19;
+        randomSeed[0] = 159;
         randomSeed[1] = 87;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
