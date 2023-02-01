@@ -1,10 +1,11 @@
 #define AVX512 0
+#define MAX_NUMBER_OF_THREADS 64
 #define NUMBER_OF_NEURONS 262144
 #define PORT 21841
 #define SOLUTION_THRESHOLD 29
 #define VERSION_A 1
 #define VERSION_B 85
-#define VERSION_C 0
+#define VERSION_C 1
 
 #include <intrin.h>
 #include <stdio.h>
@@ -13,6 +14,8 @@
 
 #pragma comment (lib, "ws2_32.lib")
 
+#define ACQUIRE(lock) while (_InterlockedCompareExchange8(&lock, 1, 0)) _mm_pause()
+#define RELEASE(lock) lock = 0
 #define EQUAL(a, b) (_mm256_movemask_epi8(_mm256_cmpeq_epi64(a, b)) == 0xFFFFFFFF)
 
 #if defined(_MSC_VER)
@@ -2240,6 +2243,11 @@ static unsigned char nonce[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 static volatile long long numberOfMiningIterations = 0;
 static volatile long long numberOfFoundSolutions = 0;
 
+static volatile char threadIndexLock = 0;
+static volatile int threadIndex = 0;
+static unsigned int neuronLinks[MAX_NUMBER_OF_THREADS][NUMBER_OF_NEURONS][2];
+static unsigned char neuronValues[MAX_NUMBER_OF_THREADS][NUMBER_OF_NEURONS];
+
 BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
 {
     state = 1;
@@ -2249,9 +2257,11 @@ BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
 
 DWORD WINAPI miningThreadProc(LPVOID)
 {
+    ACQUIRE(threadIndexLock);
+    const unsigned int threadIndex = ::threadIndex++;
+    RELEASE(threadIndexLock);
+
     unsigned char nonce[32];
-    auto neuronLinks = new unsigned int [NUMBER_OF_NEURONS][2];
-    auto neuronValues = new unsigned char [NUMBER_OF_NEURONS];
     while (!state)
     {
         if (EQUAL(*((__m256i*)minerPublicKey), ZERO))
@@ -2264,28 +2274,28 @@ DWORD WINAPI miningThreadProc(LPVOID)
             _rdrand64_step((unsigned long long*)&nonce[8]);
             _rdrand64_step((unsigned long long*)&nonce[16]);
             _rdrand64_step((unsigned long long*)&nonce[24]);
-            random(minerPublicKey, nonce, (unsigned char*)neuronLinks, sizeof(neuronLinks));
+            random(minerPublicKey, nonce, (unsigned char*)neuronLinks[threadIndex], sizeof(neuronLinks[threadIndex]));
             for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
             {
-                neuronLinks[i][0] %= NUMBER_OF_NEURONS;
-                neuronLinks[i][1] %= NUMBER_OF_NEURONS;
+                neuronLinks[threadIndex][i][0] %= NUMBER_OF_NEURONS;
+                neuronLinks[threadIndex][i][1] %= NUMBER_OF_NEURONS;
             }
-            memset(neuronValues, 0xFF, sizeof(neuronValues));
+            memset(neuronValues[threadIndex], 0xFF, sizeof(neuronValues[threadIndex]));
 
             unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
             unsigned int score = 0;
             while (true)
             {
-                const unsigned int prevValue0 = neuronValues[NUMBER_OF_NEURONS - 1];
-                const unsigned int prevValue1 = neuronValues[NUMBER_OF_NEURONS - 2];
+                const unsigned int prevValue0 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 1];
+                const unsigned int prevValue1 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 2];
 
                 for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
                 {
-                    neuronValues[j] = ~(neuronValues[neuronLinks[j][0]] & neuronValues[neuronLinks[j][1]]);
+                    neuronValues[threadIndex][j] = ~(neuronValues[threadIndex][neuronLinks[threadIndex][j][0]] & neuronValues[threadIndex][neuronLinks[threadIndex][j][1]]);
                 }
 
-                if (neuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                    && neuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+                if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] != prevValue0
+                    && neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] == prevValue1)
                 {
                     if (!((miningData[score >> 6] >> (score & 63)) & 1))
                     {
@@ -2296,8 +2306,8 @@ DWORD WINAPI miningThreadProc(LPVOID)
                 }
                 else
                 {
-                    if (neuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                        && neuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
+                    if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] != prevValue1
+                        && neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] == prevValue0)
                     {
                         if ((miningData[score >> 6] >> (score & 63)) & 1)
                         {
