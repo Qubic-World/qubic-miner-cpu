@@ -1,11 +1,11 @@
 #define AVX512 0
 #define MAX_NUMBER_OF_THREADS 64
-#define NUMBER_OF_NEURONS 262144
+#define NUMBER_OF_NEURONS 1048576
 #define PORT 21841
-#define SOLUTION_THRESHOLD 29
+#define SOLUTION_THRESHOLD 27
 #define VERSION_A 1
-#define VERSION_B 85
-#define VERSION_C 1
+#define VERSION_B 90
+#define VERSION_C 0
 
 #include <intrin.h>
 #include <stdio.h>
@@ -2339,7 +2339,6 @@ DWORD WINAPI miningThreadProc(LPVOID)
             _InterlockedIncrement64(&numberOfMiningIterations);
         }
     }
-    //"delete" is not really needed, let the OS handle it
 
     return 0;
 }
@@ -2393,10 +2392,10 @@ int main(int argc, char* argv[])
         randomSeed[1] = 87;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
-        randomSeed[4] = 132;
+        randomSeed[4] = 133;
         randomSeed[5] = 86;
         randomSeed[6] = 13;
-        randomSeed[7] = 101;
+        randomSeed[7] = 106;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         SetConsoleCtrlHandler(ctrlCHandlerRoutine, TRUE);
@@ -2421,11 +2420,11 @@ int main(int argc, char* argv[])
         WSADATA wsaData;
         WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-        unsigned long long timestamp = GetTickCount64();
+        unsigned long long timestamp = GetTickCount64(), latestKeyTimestamp;
         long long prevNumberOfMiningIterations = 0;
         while (!state)
         {
-            if (EQUAL(*((__m256i*)minerPublicKey), ZERO) || !EQUAL(*((__m256i*)nonce), ZERO))
+            if (EQUAL(*((__m256i*)minerPublicKey), ZERO) || !EQUAL(*((__m256i*)nonce), ZERO) || GetTickCount64() - latestKeyTimestamp >= 60 * 1000)
             {
                 SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
                 if (serverSocket == INVALID_SOCKET)
@@ -2449,7 +2448,7 @@ int main(int argc, char* argv[])
                         setsockopt(serverSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&value, sizeof(value));
                         setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&value, sizeof(value));
 
-                        if (EQUAL(*((__m256i*)minerPublicKey), ZERO))
+                        if (EQUAL(*((__m256i*)nonce), ZERO))
                         {
                             struct
                             {
@@ -2465,6 +2464,7 @@ int main(int argc, char* argv[])
                                 if (receiveData(serverSocket, (char*)&packet, sizeof(packet)) && packet.header.type == RESPOND_MINER_PUBLIC_KEY)
                                 {
                                     *((__m256i*)minerPublicKey) = *((__m256i*)packet.payload.minerPublicKey);
+                                    latestKeyTimestamp = GetTickCount64();
                                 }
                             }
                         }
