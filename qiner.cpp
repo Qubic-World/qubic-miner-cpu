@@ -2,9 +2,9 @@
 #define MAX_NUMBER_OF_THREADS 64
 #define NUMBER_OF_NEURONS 1048576
 #define PORT 21841
-#define SOLUTION_THRESHOLD 27
+#define SOLUTION_THRESHOLD 26
 #define VERSION_A 1
-#define VERSION_B 90
+#define VERSION_B 95
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2216,15 +2216,6 @@ typedef struct
     unsigned short type;
 } RequestResponseHeader;
 
-#define REQUEST_MINER_PUBLIC_KEY 21
-
-#define RESPOND_MINER_PUBLIC_KEY 22
-
-typedef struct
-{
-    unsigned char minerPublicKey[32];
-} RespondMinerPublicKey;
-
 #define RESPOND_RESOURCE_TESTING_SOLUTION 23
 
 typedef struct
@@ -2238,66 +2229,68 @@ const static __m256i ZERO = _mm256_setzero_si256();
 static volatile char state = 0;
 
 static unsigned long long miningData[65536];
-static unsigned char minerPublicKey[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+static unsigned char computorPublicKey[32];
 static unsigned char nonce[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static volatile long long numberOfMiningIterations = 0;
 static volatile long long numberOfFoundSolutions = 0;
 
-static volatile char threadIndexLock = 0;
-static volatile int threadIndex = 0;
 static unsigned int neuronLinks[MAX_NUMBER_OF_THREADS][NUMBER_OF_NEURONS][2];
 static unsigned char neuronValues[MAX_NUMBER_OF_THREADS][NUMBER_OF_NEURONS];
 
-BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
+static BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
 {
     state = 1;
 
     return TRUE;
 }
 
-DWORD WINAPI miningThreadProc(LPVOID)
+static DWORD WINAPI miningThreadProc(LPVOID lpParameter)
 {
-    ACQUIRE(threadIndexLock);
-    const unsigned int threadIndex = ::threadIndex++;
-    RELEASE(threadIndexLock);
+    const unsigned int threadIndex = (unsigned int)lpParameter;
 
     unsigned char nonce[32];
     while (!state)
     {
-        if (EQUAL(*((__m256i*)minerPublicKey), ZERO))
+        _rdrand64_step((unsigned long long*)&nonce[0]);
+        _rdrand64_step((unsigned long long*)&nonce[8]);
+        _rdrand64_step((unsigned long long*)&nonce[16]);
+        _rdrand64_step((unsigned long long*)&nonce[24]);
+        random(computorPublicKey, nonce, (unsigned char*)neuronLinks[threadIndex], sizeof(neuronLinks[threadIndex]));
+        for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
         {
-            Sleep(1000);
+            neuronLinks[threadIndex][i][0] %= NUMBER_OF_NEURONS;
+            neuronLinks[threadIndex][i][1] %= NUMBER_OF_NEURONS;
         }
-        else
+        memset(neuronValues[threadIndex], 0xFF, sizeof(neuronValues[threadIndex]));
+
+        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
+        unsigned int score = 0;
+        while (true)
         {
-            _rdrand64_step((unsigned long long*)&nonce[0]);
-            _rdrand64_step((unsigned long long*)&nonce[8]);
-            _rdrand64_step((unsigned long long*)&nonce[16]);
-            _rdrand64_step((unsigned long long*)&nonce[24]);
-            random(minerPublicKey, nonce, (unsigned char*)neuronLinks[threadIndex], sizeof(neuronLinks[threadIndex]));
-            for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+            const unsigned int prevValue0 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 1];
+            const unsigned int prevValue1 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 2];
+
+            for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
             {
-                neuronLinks[threadIndex][i][0] %= NUMBER_OF_NEURONS;
-                neuronLinks[threadIndex][i][1] %= NUMBER_OF_NEURONS;
+                neuronValues[threadIndex][j] = ~(neuronValues[threadIndex][neuronLinks[threadIndex][j][0]] & neuronValues[threadIndex][neuronLinks[threadIndex][j][1]]);
             }
-            memset(neuronValues[threadIndex], 0xFF, sizeof(neuronValues[threadIndex]));
 
-            unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-            unsigned int score = 0;
-            while (true)
+            if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] != prevValue0
+                && neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] == prevValue1)
             {
-                const unsigned int prevValue0 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 1];
-                const unsigned int prevValue1 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 2];
-
-                for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
+                if (!((miningData[score >> 6] >> (score & 63)) & 1))
                 {
-                    neuronValues[threadIndex][j] = ~(neuronValues[threadIndex][neuronLinks[threadIndex][j][0]] & neuronValues[threadIndex][neuronLinks[threadIndex][j][1]]);
+                    break;
                 }
 
-                if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] != prevValue0
-                    && neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] == prevValue1)
+                score++;
+            }
+            else
+            {
+                if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] != prevValue1
+                    && neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] == prevValue0)
                 {
-                    if (!((miningData[score >> 6] >> (score & 63)) & 1))
+                    if ((miningData[score >> 6] >> (score & 63)) & 1)
                     {
                         break;
                     }
@@ -2306,44 +2299,31 @@ DWORD WINAPI miningThreadProc(LPVOID)
                 }
                 else
                 {
-                    if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] != prevValue1
-                        && neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] == prevValue0)
+                    if (!(--limiter))
                     {
-                        if ((miningData[score >> 6] >> (score & 63)) & 1)
-                        {
-                            break;
-                        }
-
-                        score++;
-                    }
-                    else
-                    {
-                        if (!(--limiter))
-                        {
-                            break;
-                        }
+                        break;
                     }
                 }
             }
-
-            if (score >= SOLUTION_THRESHOLD)
-            {
-                while (!EQUAL(*((__m256i*)::nonce), ZERO))
-                {
-                    Sleep(1);
-                }
-                *((__m256i*)::nonce) = *((__m256i*)nonce);
-                _InterlockedIncrement64(&numberOfFoundSolutions);
-            }
-
-            _InterlockedIncrement64(&numberOfMiningIterations);
         }
+
+        if (score >= SOLUTION_THRESHOLD)
+        {
+            while (!EQUAL(*((__m256i*)::nonce), ZERO))
+            {
+                Sleep(1);
+            }
+            *((__m256i*)::nonce) = *((__m256i*)nonce);
+            _InterlockedIncrement64(&numberOfFoundSolutions);
+        }
+
+        _InterlockedIncrement64(&numberOfMiningIterations);
     }
 
     return 0;
 }
 
-bool sendData(SOCKET serverSocket, char* buffer, unsigned int size)
+static bool sendData(SOCKET serverSocket, char* buffer, unsigned int size)
 {
     while (size)
     {
@@ -2359,7 +2339,7 @@ bool sendData(SOCKET serverSocket, char* buffer, unsigned int size)
     return true;
 }
 
-bool receiveData(SOCKET serverSocket, char* buffer, unsigned int size)
+static bool receiveData(SOCKET serverSocket, char* buffer, unsigned int size)
 {
     const unsigned long long beginningTime = GetTickCount64();
     while (size && GetTickCount64() - beginningTime <= 2000)
@@ -2376,20 +2356,41 @@ bool receiveData(SOCKET serverSocket, char* buffer, unsigned int size)
     return true;
 }
 
+static bool getPublicKeyFromIdentity(const unsigned char* id, unsigned char* publicKey)
+{
+    unsigned char publicKeyBuffer[32];
+    for (int i = 0; i < 4; i++)
+    {
+        *((unsigned long long*) & publicKeyBuffer[i << 3]) = 0;
+        for (int j = 14; j-- > 0; )
+        {
+            if (id[i * 14 + j] < 'A' || id[i * 14 + j] > 'Z')
+            {
+                return false;
+            }
+
+            *((unsigned long long*) & publicKeyBuffer[i << 3]) = *((unsigned long long*) & publicKeyBuffer[i << 3]) * 26 + (id[i * 14 + j] - 'A');
+        }
+    }
+    *((__m256i*)publicKey) = *((__m256i*)publicKeyBuffer);
+
+    return true;
+}
+
 int main(int argc, char* argv[])
 {
-    printf("Qiner %d.%d.%d is launched.\n", VERSION_A, VERSION_B, VERSION_C);
-
-    if (argc < 2)
+    if (argc < 3)
     {
-        printf("The IP address is not specified!\n");
+        printf("Usage:   Qiner IP-address Id [Number of threads]\n");
     }
     else
     {
+        printf("Qiner %d.%d.%d is launched.\n", VERSION_A, VERSION_B, VERSION_C);
+
         unsigned char randomSeed[32];
         ZeroMemory(randomSeed, 32);
         randomSeed[0] = 159;
-        randomSeed[1] = 87;
+        randomSeed[1] = 187;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
         randomSeed[4] = 133;
@@ -2400,73 +2401,53 @@ int main(int argc, char* argv[])
 
         SetConsoleCtrlHandler(ctrlCHandlerRoutine, TRUE);
 
-        unsigned int numberOfThreads;
-        if (argc < 3)
+        if (!getPublicKeyFromIdentity((const unsigned char*)argv[2], computorPublicKey))
         {
-            SYSTEM_INFO systemInfo;
-            GetSystemInfo(&systemInfo);
-            numberOfThreads = systemInfo.dwNumberOfProcessors;
+            printf("The Id is invalid!\n");
         }
         else
         {
-            numberOfThreads = atoi(argv[2]);
-        }
-        printf("%d threads are used.\n", numberOfThreads);
-        for (unsigned int i = numberOfThreads; i-- > 0; )
-        {
-            CreateThread(NULL, 0, miningThreadProc, NULL, 0, NULL);
-        }
-
-        WSADATA wsaData;
-        WSAStartup(MAKEWORD(2, 2), &wsaData);
-
-        unsigned long long timestamp = GetTickCount64(), latestKeyTimestamp;
-        long long prevNumberOfMiningIterations = 0;
-        while (!state)
-        {
-            if (EQUAL(*((__m256i*)minerPublicKey), ZERO) || !EQUAL(*((__m256i*)nonce), ZERO) || GetTickCount64() - latestKeyTimestamp >= 60 * 1000)
+            unsigned int numberOfThreads;
+            if (argc < 4)
             {
-                SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-                if (serverSocket == INVALID_SOCKET)
+                SYSTEM_INFO systemInfo;
+                GetSystemInfo(&systemInfo);
+                numberOfThreads = systemInfo.dwNumberOfProcessors;
+            }
+            else
+            {
+                numberOfThreads = atoi(argv[3]);
+            }
+            printf("%d threads are used.\n", numberOfThreads);
+            for (unsigned int i = numberOfThreads; i-- > 0; )
+            {
+                CreateThread(NULL, 0, miningThreadProc, (LPVOID)i, 0, NULL);
+            }
+
+            WSADATA wsaData;
+            WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+            unsigned long long timestamp = GetTickCount64();
+            long long prevNumberOfMiningIterations = 0;
+            while (!state)
+            {
+                if (!EQUAL(*((__m256i*)nonce), ZERO))
                 {
-                    printf("Fail to create a socket (%d)!\n", WSAGetLastError());
-                }
-                else
-                {
-                    sockaddr_in addr;
-                    ZeroMemory(&addr, sizeof(addr));
-                    addr.sin_family = AF_INET;
-                    addr.sin_port = htons(PORT);
-                    sscanf(argv[1], "%d.%d.%d.%d", &addr.sin_addr.S_un.S_un_b.s_b1, &addr.sin_addr.S_un.S_un_b.s_b2, &addr.sin_addr.S_un.S_un_b.s_b3, &addr.sin_addr.S_un.S_un_b.s_b4);
-                    if (connect(serverSocket, (const sockaddr*)&addr, sizeof(addr)))
+                    SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                    if (serverSocket == INVALID_SOCKET)
                     {
-                        printf("Fail to connect to %d.%d.%d.%d (%d)!\n", addr.sin_addr.S_un.S_un_b.s_b1, addr.sin_addr.S_un.S_un_b.s_b2, addr.sin_addr.S_un.S_un_b.s_b3, addr.sin_addr.S_un.S_un_b.s_b4, WSAGetLastError());
+                        printf("Fail to create a socket (%d)!\n", WSAGetLastError());
                     }
                     else
                     {
-                        DWORD value = 2000;
-                        setsockopt(serverSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&value, sizeof(value));
-                        setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&value, sizeof(value));
-
-                        if (EQUAL(*((__m256i*)nonce), ZERO))
+                        sockaddr_in addr;
+                        ZeroMemory(&addr, sizeof(addr));
+                        addr.sin_family = AF_INET;
+                        addr.sin_port = htons(PORT);
+                        sscanf(argv[1], "%d.%d.%d.%d", &addr.sin_addr.S_un.S_un_b.s_b1, &addr.sin_addr.S_un.S_un_b.s_b2, &addr.sin_addr.S_un.S_un_b.s_b3, &addr.sin_addr.S_un.S_un_b.s_b4);
+                        if (connect(serverSocket, (const sockaddr*)&addr, sizeof(addr)))
                         {
-                            struct
-                            {
-                                RequestResponseHeader header;
-                            } packet = { { sizeof(packet), VERSION_B, REQUEST_MINER_PUBLIC_KEY } };
-                            if (sendData(serverSocket, (char*)&packet, packet.header.size))
-                            {
-                                struct
-                                {
-                                    RequestResponseHeader header;
-                                    RespondMinerPublicKey payload;
-                                } packet;
-                                if (receiveData(serverSocket, (char*)&packet, sizeof(packet)) && packet.header.type == RESPOND_MINER_PUBLIC_KEY)
-                                {
-                                    *((__m256i*)minerPublicKey) = *((__m256i*)packet.payload.minerPublicKey);
-                                    latestKeyTimestamp = GetTickCount64();
-                                }
-                            }
+                            printf("Fail to connect to %d.%d.%d.%d (%d)!\n", addr.sin_addr.S_un.S_un_b.s_b1, addr.sin_addr.S_un.S_un_b.s_b2, addr.sin_addr.S_un.S_un_b.s_b3, addr.sin_addr.S_un.S_un_b.s_b4, WSAGetLastError());
                         }
                         else
                         {
@@ -2475,58 +2456,36 @@ int main(int argc, char* argv[])
                                 RequestResponseHeader header;
                                 RespondResourceTestingSolution payload;
                             } packet = { { sizeof(packet), VERSION_B, RESPOND_RESOURCE_TESTING_SOLUTION } };
-                            *((__m256i*)packet.payload.minerPublicKey) = *((__m256i*)minerPublicKey);
+                            *((__m256i*)packet.payload.minerPublicKey) = *((__m256i*)computorPublicKey);
                             *((__m256i*)packet.payload.nonce) = *((__m256i*)nonce);
                             if (sendData(serverSocket, (char*)&packet, packet.header.size))
                             {
-                                *((__m256i*)minerPublicKey) = ZERO;
                                 *((__m256i*)nonce) = ZERO;
                             }
                         }
-                    }
 
-                    closesocket(serverSocket);
+                        closesocket(serverSocket);
+                    }
+                }
+
+                Sleep(1000);
+
+                unsigned long long delta = GetTickCount64() - timestamp;
+                if (delta >= 1000)
+                {
+                    SYSTEMTIME systemTime;
+                    GetSystemTime(&systemTime);
+                    printf("|   %d-%d%d-%d%d %d%d:%d%d:%d%d   |   %d it/s   |   %d solutions   |   %.10s...   |\n", systemTime.wYear, systemTime.wMonth / 10, systemTime.wMonth % 10, systemTime.wDay / 10, systemTime.wDay % 10, systemTime.wHour / 10, systemTime.wHour % 10, systemTime.wMinute / 10, systemTime.wMinute % 10, systemTime.wSecond / 10, systemTime.wSecond % 10, (numberOfMiningIterations - prevNumberOfMiningIterations) * 1000 / delta, numberOfFoundSolutions, argv[2]);
+                    prevNumberOfMiningIterations = numberOfMiningIterations;
+                    timestamp = GetTickCount64();
                 }
             }
 
-            Sleep(1000);
-
-            unsigned long long delta = GetTickCount64() - timestamp;
-            if (delta >= 1000)
-            {
-                unsigned char id[60 + 1];
-
-                for (int i = 0; i < 4; i++)
-                {
-                    unsigned long long publicKeyFragment = *((unsigned long long*)&minerPublicKey[i << 3]);
-                    for (int j = 0; j < 14; j++)
-                    {
-                        id[i * 14 + j] = publicKeyFragment % 26 + 'A';
-                        publicKeyFragment /= 26;
-                    }
-                }
-                unsigned int identityBytesChecksum;
-                KangarooTwelve(minerPublicKey, 32, (unsigned char*)&identityBytesChecksum, 3);
-                identityBytesChecksum &= 0x3FFFF;
-                for (int i = 0; i < 4; i++)
-                {
-                    id[56 + i] = identityBytesChecksum % 26 + 'A';
-                    identityBytesChecksum /= 26;
-                }
-                id[60] = 0;
-
-                SYSTEMTIME systemTime;
-                GetSystemTime(&systemTime);
-                printf("|   %d-%d%d-%d%d %d%d:%d%d:%d%d   |   %d it/s   |   %d solutions   |   %.10s...   |\n", systemTime.wYear, systemTime.wMonth / 10, systemTime.wMonth % 10, systemTime.wDay / 10, systemTime.wDay % 10, systemTime.wHour / 10, systemTime.wHour % 10, systemTime.wMinute / 10, systemTime.wMinute % 10, systemTime.wSecond / 10, systemTime.wSecond % 10, (numberOfMiningIterations - prevNumberOfMiningIterations) * 1000 / delta, numberOfFoundSolutions, id);
-                prevNumberOfMiningIterations = numberOfMiningIterations;
-                timestamp = GetTickCount64();
-            }
+            WSACleanup();
         }
 
-        WSACleanup();
+        printf("Qiner %d.%d.%d is shut down.\n", VERSION_A, VERSION_B, VERSION_C);
     }
-
-    printf("Qiner %d.%d.%d is shut down.\n", VERSION_A, VERSION_B, VERSION_C);
     
     return 0;
 }
