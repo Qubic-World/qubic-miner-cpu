@@ -1,10 +1,9 @@
 #define AVX512 0
-#define MAX_NUMBER_OF_THREADS 64
 #define NUMBER_OF_NEURONS 1048576
 #define PORT 21841
-#define SOLUTION_THRESHOLD 26
+#define SOLUTION_THRESHOLD 24
 #define VERSION_A 1
-#define VERSION_B 95
+#define VERSION_B 102
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2209,18 +2208,34 @@ void random(unsigned char* publicKey, unsigned char* nonce, unsigned char* outpu
     }
 }
 
-typedef struct
+struct RequestResponseHeader
 {
-    unsigned int size;
-    unsigned short protocol;
-    unsigned short type;
-} RequestResponseHeader;
+private:
+    unsigned char _size[3];
+
+public:
+    unsigned char protocol;
+    unsigned char dejavu[3];
+    unsigned char type;
+
+    inline unsigned int size()
+    {
+        return (*((unsigned int*)_size)) & 0xFFFFFF;
+    }
+
+    inline void setSize(unsigned int size)
+    {
+        _size[0] = (unsigned char)size;
+        _size[1] = (unsigned char)(size >> 8);
+        _size[2] = (unsigned char)(size >> 16);
+    }
+};
 
 #define RESPOND_RESOURCE_TESTING_SOLUTION 23
 
 typedef struct
 {
-    unsigned char minerPublicKey[32];
+    unsigned char computorPublicKey[32];
     unsigned char nonce[32];
 } RespondResourceTestingSolution;
 
@@ -2232,10 +2247,7 @@ static unsigned long long miningData[65536];
 static unsigned char computorPublicKey[32];
 static unsigned char nonce[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static volatile long long numberOfMiningIterations = 0;
-static volatile long long numberOfFoundSolutions = 0;
-
-static unsigned int neuronLinks[MAX_NUMBER_OF_THREADS][NUMBER_OF_NEURONS][2];
-static unsigned char neuronValues[MAX_NUMBER_OF_THREADS][NUMBER_OF_NEURONS];
+static unsigned int numberOfFoundSolutions = 0;
 
 static BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
 {
@@ -2244,10 +2256,10 @@ static BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
     return TRUE;
 }
 
-static DWORD WINAPI miningThreadProc(LPVOID lpParameter)
+static DWORD WINAPI miningThreadProc(LPVOID)
 {
-    const unsigned int threadIndex = (unsigned int)lpParameter;
-
+    unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
+    unsigned char neuronValues[NUMBER_OF_NEURONS];
     unsigned char nonce[32];
     while (!state)
     {
@@ -2255,28 +2267,28 @@ static DWORD WINAPI miningThreadProc(LPVOID lpParameter)
         _rdrand64_step((unsigned long long*)&nonce[8]);
         _rdrand64_step((unsigned long long*)&nonce[16]);
         _rdrand64_step((unsigned long long*)&nonce[24]);
-        random(computorPublicKey, nonce, (unsigned char*)neuronLinks[threadIndex], sizeof(neuronLinks[threadIndex]));
+        random(computorPublicKey, nonce, (unsigned char*)neuronLinks, sizeof(neuronLinks));
         for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
         {
-            neuronLinks[threadIndex][i][0] %= NUMBER_OF_NEURONS;
-            neuronLinks[threadIndex][i][1] %= NUMBER_OF_NEURONS;
+            neuronLinks[i][0] %= NUMBER_OF_NEURONS;
+            neuronLinks[i][1] %= NUMBER_OF_NEURONS;
         }
-        memset(neuronValues[threadIndex], 0xFF, sizeof(neuronValues[threadIndex]));
+        memset(neuronValues, 0xFF, sizeof(neuronValues));
 
         unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
         unsigned int score = 0;
         while (true)
         {
-            const unsigned int prevValue0 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 1];
-            const unsigned int prevValue1 = neuronValues[threadIndex][NUMBER_OF_NEURONS - 2];
+            const unsigned int prevValue0 = neuronValues[NUMBER_OF_NEURONS - 1];
+            const unsigned int prevValue1 = neuronValues[NUMBER_OF_NEURONS - 2];
 
             for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
             {
-                neuronValues[threadIndex][j] = ~(neuronValues[threadIndex][neuronLinks[threadIndex][j][0]] & neuronValues[threadIndex][neuronLinks[threadIndex][j][1]]);
+                neuronValues[j] = ~(neuronValues[neuronLinks[j][0]] & neuronValues[neuronLinks[j][1]]);
             }
 
-            if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] != prevValue0
-                && neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] == prevValue1)
+            if (neuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
+                && neuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
             {
                 if (!((miningData[score >> 6] >> (score & 63)) & 1))
                 {
@@ -2287,8 +2299,8 @@ static DWORD WINAPI miningThreadProc(LPVOID lpParameter)
             }
             else
             {
-                if (neuronValues[threadIndex][NUMBER_OF_NEURONS - 2] != prevValue1
-                    && neuronValues[threadIndex][NUMBER_OF_NEURONS - 1] == prevValue0)
+                if (neuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
+                    && neuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
                 {
                     if ((miningData[score >> 6] >> (score & 63)) & 1)
                     {
@@ -2314,7 +2326,7 @@ static DWORD WINAPI miningThreadProc(LPVOID lpParameter)
                 Sleep(1);
             }
             *((__m256i*)::nonce) = *((__m256i*)nonce);
-            _InterlockedIncrement64(&numberOfFoundSolutions);
+            numberOfFoundSolutions++;
         }
 
         _InterlockedIncrement64(&numberOfMiningIterations);
@@ -2389,7 +2401,7 @@ int main(int argc, char* argv[])
 
         unsigned char randomSeed[32];
         ZeroMemory(randomSeed, 32);
-        randomSeed[0] = 159;
+        randomSeed[0] = 114;
         randomSeed[1] = 187;
         randomSeed[2] = 115;
         randomSeed[3] = 131;
@@ -2421,7 +2433,7 @@ int main(int argc, char* argv[])
             printf("%d threads are used.\n", numberOfThreads);
             for (unsigned int i = numberOfThreads; i-- > 0; )
             {
-                CreateThread(NULL, 0, miningThreadProc, (LPVOID)i, 0, NULL);
+                CreateThread(NULL, 16777216, miningThreadProc, 0, 0, NULL);
             }
 
             WSADATA wsaData;
@@ -2455,10 +2467,14 @@ int main(int argc, char* argv[])
                             {
                                 RequestResponseHeader header;
                                 RespondResourceTestingSolution payload;
-                            } packet = { { sizeof(packet), VERSION_B, RESPOND_RESOURCE_TESTING_SOLUTION } };
-                            *((__m256i*)packet.payload.minerPublicKey) = *((__m256i*)computorPublicKey);
+                            } packet;
+                            packet.header.setSize(sizeof(packet));
+                            packet.header.protocol = VERSION_B;
+                            packet.header.dejavu[2] = packet.header.dejavu[1] = packet.header.dejavu[0] = 0;
+                            packet.header.type = RESPOND_RESOURCE_TESTING_SOLUTION;
+                            *((__m256i*)packet.payload.computorPublicKey) = *((__m256i*)computorPublicKey);
                             *((__m256i*)packet.payload.nonce) = *((__m256i*)nonce);
-                            if (sendData(serverSocket, (char*)&packet, packet.header.size))
+                            if (sendData(serverSocket, (char*)&packet, packet.header.size()))
                             {
                                 *((__m256i*)nonce) = ZERO;
                             }
