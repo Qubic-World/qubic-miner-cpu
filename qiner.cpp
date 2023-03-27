@@ -3,7 +3,7 @@
 #define PORT 21841
 #define SOLUTION_THRESHOLD 24
 #define VERSION_A 1
-#define VERSION_B 102
+#define VERSION_B 107
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2212,12 +2212,11 @@ struct RequestResponseHeader
 {
 private:
     unsigned char _size[3];
+    unsigned char _protocol;
+    unsigned char _dejavu[3];
+    unsigned char _type;
 
 public:
-    unsigned char protocol;
-    unsigned char dejavu[3];
-    unsigned char type;
-
     inline unsigned int size()
     {
         return (*((unsigned int*)_size)) & 0xFFFFFF;
@@ -2229,15 +2228,61 @@ public:
         _size[1] = (unsigned char)(size >> 8);
         _size[2] = (unsigned char)(size >> 16);
     }
+
+    inline unsigned char protocol()
+    {
+        return _protocol;
+    }
+
+    inline void setProtocol()
+    {
+        _protocol = (unsigned char)VERSION_B;
+    }
+
+    inline bool isDejavuZero()
+    {
+        return !(_dejavu[0] | _dejavu[1] | _dejavu[2]);
+    }
+
+    inline void zeroDejavu()
+    {
+        _dejavu[0] = 0;
+        _dejavu[1] = 0;
+        _dejavu[2] = 0;
+    }
+
+    inline void randomizeDejavu()
+    {
+        unsigned int random;
+        _rdrand32_step(&random);
+        if (!random)
+        {
+            random = 1;
+        }
+        _dejavu[0] = (unsigned char)random;
+        _dejavu[1] = (unsigned char)(random >> 8);
+        _dejavu[2] = (unsigned char)(random >> 16);
+    }
+
+    inline unsigned char type()
+    {
+        return _type;
+    }
+
+    inline void setType(const unsigned char type)
+    {
+        _type = type;
+    }
 };
 
-#define RESPOND_RESOURCE_TESTING_SOLUTION 23
+#define BROADCAST_MESSAGE 1
 
 typedef struct
 {
-    unsigned char computorPublicKey[32];
-    unsigned char nonce[32];
-} RespondResourceTestingSolution;
+    unsigned char sourcePublicKey[32];
+    unsigned char destinationPublicKey[32];
+    unsigned char gammingNonce[32];
+} Message;
 
 const static __m256i ZERO = _mm256_setzero_si256();
 
@@ -2401,14 +2446,14 @@ int main(int argc, char* argv[])
 
         unsigned char randomSeed[32];
         ZeroMemory(randomSeed, 32);
-        randomSeed[0] = 114;
-        randomSeed[1] = 187;
-        randomSeed[2] = 115;
-        randomSeed[3] = 131;
-        randomSeed[4] = 133;
-        randomSeed[5] = 86;
-        randomSeed[6] = 13;
-        randomSeed[7] = 106;
+        randomSeed[0] = 247;
+        randomSeed[1] = 37;
+        randomSeed[2] = 9;
+        randomSeed[3] = 28;
+        randomSeed[4] = 137;
+        randomSeed[5] = 47;
+        randomSeed[6] = 17;
+        randomSeed[7] = 8;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         SetConsoleCtrlHandler(ctrlCHandlerRoutine, TRUE);
@@ -2466,14 +2511,48 @@ int main(int argc, char* argv[])
                             struct
                             {
                                 RequestResponseHeader header;
-                                RespondResourceTestingSolution payload;
+                                Message message;
+                                unsigned char solutionNonce[32];
+                                unsigned char signature[64];
                             } packet;
+
                             packet.header.setSize(sizeof(packet));
-                            packet.header.protocol = VERSION_B;
-                            packet.header.dejavu[2] = packet.header.dejavu[1] = packet.header.dejavu[0] = 0;
-                            packet.header.type = RESPOND_RESOURCE_TESTING_SOLUTION;
-                            *((__m256i*)packet.payload.computorPublicKey) = *((__m256i*)computorPublicKey);
-                            *((__m256i*)packet.payload.nonce) = *((__m256i*)nonce);
+                            packet.header.setProtocol();
+                            packet.header.zeroDejavu();
+                            packet.header.setType(BROADCAST_MESSAGE);
+
+                            *((__m256i*)packet.message.sourcePublicKey) = ZERO;
+                            *((__m256i*)packet.message.destinationPublicKey) = *((__m256i*)computorPublicKey);
+
+                            unsigned char sharedKeyAndGammingNonce[64];
+                            ZeroMemory(sharedKeyAndGammingNonce, 32);
+                            unsigned char gammingKey[32];
+                            do
+                            {
+                                _rdrand64_step((unsigned long long*)&packet.message.gammingNonce[0]);
+                                _rdrand64_step((unsigned long long*)&packet.message.gammingNonce[8]);
+                                _rdrand64_step((unsigned long long*)&packet.message.gammingNonce[16]);
+                                _rdrand64_step((unsigned long long*)&packet.message.gammingNonce[24]);
+                                CopyMemory(&sharedKeyAndGammingNonce[32], packet.message.gammingNonce, 32);
+                                KangarooTwelve64To32(sharedKeyAndGammingNonce, gammingKey);
+                            } while (gammingKey[0]);
+
+                            unsigned char gamma[32];
+                            KangarooTwelve(gammingKey, sizeof(gammingKey), gamma, sizeof(gamma));
+                            for (unsigned int i = 0; i < 32; i++)
+                            {
+                                packet.solutionNonce[i] = nonce[i] ^ gamma[i];
+                            }
+
+                            _rdrand64_step((unsigned long long*)&packet.signature[0]);
+                            _rdrand64_step((unsigned long long*)&packet.signature[8]);
+                            _rdrand64_step((unsigned long long*)&packet.signature[16]);
+                            _rdrand64_step((unsigned long long*)&packet.signature[24]);
+                            _rdrand64_step((unsigned long long*)&packet.signature[32]);
+                            _rdrand64_step((unsigned long long*)&packet.signature[40]);
+                            _rdrand64_step((unsigned long long*)&packet.signature[48]);
+                            _rdrand64_step((unsigned long long*)&packet.signature[56]);
+
                             if (sendData(serverSocket, (char*)&packet, packet.header.size()))
                             {
                                 *((__m256i*)nonce) = ZERO;
