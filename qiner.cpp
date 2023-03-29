@@ -3,7 +3,7 @@
 #define PORT 21841
 #define SOLUTION_THRESHOLD 24
 #define VERSION_A 1
-#define VERSION_B 107
+#define VERSION_B 109
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2448,8 +2448,8 @@ int main(int argc, char* argv[])
         ZeroMemory(randomSeed, 32);
         randomSeed[0] = 247;
         randomSeed[1] = 37;
-        randomSeed[2] = 9;
-        randomSeed[3] = 28;
+        randomSeed[2] = 79;
+        randomSeed[3] = 29;
         randomSeed[4] = 137;
         randomSeed[5] = 47;
         randomSeed[6] = 17;
