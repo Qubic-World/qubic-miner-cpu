@@ -1,9 +1,7 @@
 #define AVX512 0
-#define NUMBER_OF_NEURONS 1048576
 #define PORT 21841
-#define SOLUTION_THRESHOLD 24
 #define VERSION_A 1
-#define VERSION_B 109
+#define VERSION_B 111
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2284,30 +2282,46 @@ typedef struct
     unsigned char gammingNonce[32];
 } Message;
 
-const static __m256i ZERO = _mm256_setzero_si256();
-
-static volatile char state = 0;
-
-static unsigned long long miningData[65536];
-static unsigned char computorPublicKey[32];
-static unsigned char nonce[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static volatile long long numberOfMiningIterations = 0;
-static unsigned int numberOfFoundSolutions = 0;
-
-static BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
+struct Miner
 {
-    state = 1;
+    #define NUMBER_OF_NEURONS 1048576
+    #define SOLUTION_THRESHOLD 24
 
-    return TRUE;
-}
+    unsigned long long miningData[1024];
+    unsigned char computorPublicKey[32];
 
-static DWORD WINAPI miningThreadProc(LPVOID)
-{
-    unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
-    unsigned char neuronValues[NUMBER_OF_NEURONS];
-    unsigned char nonce[32];
-    while (!state)
+    void initialize()
     {
+        unsigned char randomSeed[32];
+        memset(randomSeed, 0, sizeof(randomSeed));
+        randomSeed[0] = 147;
+        randomSeed[1] = 17;
+        randomSeed[2] = 19;
+        randomSeed[3] = 19;
+        randomSeed[4] = 117;
+        randomSeed[5] = 17;
+        randomSeed[6] = 17;
+        randomSeed[7] = 81;
+        random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
+
+        memset(computorPublicKey, 0, sizeof(computorPublicKey));
+    }
+
+    void getComputorPublicKey(unsigned char computorPublicKey[32])
+    {
+        *((__m256i*)computorPublicKey) = *((__m256i*)this->computorPublicKey);
+    }
+
+    void setComputorPublicKey(unsigned char computorPublicKey[32])
+    {
+        *((__m256i*)this->computorPublicKey) = *((__m256i*)computorPublicKey);
+    }
+
+    bool findSolution(unsigned char nonce[32])
+    {
+        unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
+        unsigned char neuronValues[NUMBER_OF_NEURONS];
+
         _rdrand64_step((unsigned long long*)&nonce[0]);
         _rdrand64_step((unsigned long long*)&nonce[8]);
         _rdrand64_step((unsigned long long*)&nonce[16]);
@@ -2364,7 +2378,36 @@ static DWORD WINAPI miningThreadProc(LPVOID)
             }
         }
 
-        if (score >= SOLUTION_THRESHOLD)
+        return score >= SOLUTION_THRESHOLD;
+    }
+};
+
+const static __m256i ZERO = _mm256_setzero_si256();
+
+static volatile char state = 0;
+
+static unsigned char computorPublicKey[32];
+static unsigned char nonce[32] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+static volatile long long numberOfMiningIterations = 0;
+static unsigned int numberOfFoundSolutions = 0;
+
+static BOOL WINAPI ctrlCHandlerRoutine(DWORD dwCtrlType)
+{
+    state = 1;
+
+    return TRUE;
+}
+
+static DWORD WINAPI miningThreadProc(LPVOID)
+{
+    Miner miner;
+    miner.initialize();
+    miner.setComputorPublicKey(computorPublicKey);
+
+    unsigned char nonce[32];
+    while (!state)
+    {
+        if (miner.findSolution(nonce))
         {
             while (!EQUAL(*((__m256i*)::nonce), ZERO))
             {
@@ -2443,18 +2486,6 @@ int main(int argc, char* argv[])
     else
     {
         printf("Qiner %d.%d.%d is launched.\n", VERSION_A, VERSION_B, VERSION_C);
-
-        unsigned char randomSeed[32];
-        ZeroMemory(randomSeed, 32);
-        randomSeed[0] = 247;
-        randomSeed[1] = 37;
-        randomSeed[2] = 79;
-        randomSeed[3] = 29;
-        randomSeed[4] = 137;
-        randomSeed[5] = 47;
-        randomSeed[6] = 17;
-        randomSeed[7] = 8;
-        random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         SetConsoleCtrlHandler(ctrlCHandlerRoutine, TRUE);
 
