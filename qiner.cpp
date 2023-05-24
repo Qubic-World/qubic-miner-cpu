@@ -1,7 +1,7 @@
 #define AVX512 0
 #define PORT 21841
 #define VERSION_A 1
-#define VERSION_B 118
+#define VERSION_B 127
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2284,7 +2284,7 @@ typedef struct
 
 struct Miner
 {
-    #define NUMBER_OF_NEURONS 1048576
+    #define NUMBER_OF_NEURONS 2097152
     #define SOLUTION_THRESHOLD 23
 
     unsigned long long miningData[1024];
@@ -2294,14 +2294,14 @@ struct Miner
     {
         unsigned char randomSeed[32];
         memset(randomSeed, 0, sizeof(randomSeed));
-        randomSeed[0] = 8;
-        randomSeed[1] = 8;
-        randomSeed[2] = 8;
-        randomSeed[3] = 8;
-        randomSeed[4] = 8;
-        randomSeed[5] = 8;
-        randomSeed[6] = 8;
-        randomSeed[7] = 8;
+        randomSeed[0] = 6;
+        randomSeed[1] = 7;
+        randomSeed[2] = 6;
+        randomSeed[3] = 6;
+        randomSeed[4] = 6;
+        randomSeed[5] = 6;
+        randomSeed[6] = 6;
+        randomSeed[7] = 6;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         memset(computorPublicKey, 0, sizeof(computorPublicKey));
