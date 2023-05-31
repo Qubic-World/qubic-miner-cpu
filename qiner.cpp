@@ -1,7 +1,7 @@
 #define AVX512 0
 #define PORT 21841
 #define VERSION_A 1
-#define VERSION_B 127
+#define VERSION_B 136
 #define VERSION_C 0
 
 #include <intrin.h>
@@ -2284,8 +2284,8 @@ typedef struct
 
 struct Miner
 {
-    #define NUMBER_OF_NEURONS 2097152
-    #define SOLUTION_THRESHOLD 23
+    #define NUMBER_OF_NEURONS 4194304
+    #define SOLUTION_THRESHOLD 22
 
     unsigned long long miningData[1024];
     unsigned char computorPublicKey[32];
@@ -2297,11 +2297,11 @@ struct Miner
         randomSeed[0] = 6;
         randomSeed[1] = 7;
         randomSeed[2] = 6;
-        randomSeed[3] = 6;
+        randomSeed[3] = 7;
         randomSeed[4] = 6;
-        randomSeed[5] = 6;
+        randomSeed[5] = 7;
         randomSeed[6] = 6;
-        randomSeed[7] = 6;
+        randomSeed[7] = 7;
         random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
 
         memset(computorPublicKey, 0, sizeof(computorPublicKey));
@@ -2509,7 +2509,7 @@ int main(int argc, char* argv[])
             printf("%d threads are used.\n", numberOfThreads);
             for (unsigned int i = numberOfThreads; i-- > 0; )
             {
-                CreateThread(NULL, 16777216, miningThreadProc, 0, 0, NULL);
+                CreateThread(NULL, 67108864, miningThreadProc, 0, 0, NULL);
             }
 
             WSADATA wsaData;
