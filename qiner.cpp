@@ -2288,7 +2288,7 @@ struct Miner
     #define NUMBER_OF_OUTPUT_NEURONS 640
     #define MAX_INPUT_DURATION 10
     #define MAX_OUTPUT_DURATION 10
-    #define SOLUTION_THRESHOLD 555
+    #define SOLUTION_THRESHOLD 600
 
     unsigned long long data[DATA_LENGTH / 64];
     unsigned char computorPublicKey[32];
@@ -2354,27 +2354,18 @@ struct Miner
 
         for (unsigned int tick = 0; tick < MAX_INPUT_DURATION; tick++)
         {
+            unsigned int offset = 0;
             for (unsigned int inputNeuronIndex = 0; inputNeuronIndex < NUMBER_OF_INPUT_NEURONS + INFO_LENGTH; inputNeuronIndex++)
             {
-                int counters[2] = { 0, 0 };
+                unsigned int counters[2];
+                *((long long*)counters) = 0;
                 for (unsigned int anotherInputNeuronIndex = 0; anotherInputNeuronIndex < DATA_LENGTH + NUMBER_OF_INPUT_NEURONS + INFO_LENGTH; anotherInputNeuronIndex++)
                 {
-                    const unsigned int offset = inputNeuronIndex * (DATA_LENGTH + NUMBER_OF_INPUT_NEURONS + INFO_LENGTH) + anotherInputNeuronIndex;
                     const unsigned long long synapse = synapses.input[offset >> 5] >> ((offset & 31) << 1);
-                    const int multiplier = ((int)(synapse & 1)) - ((int)((synapse >> 1) & 1));
-                    if (multiplier)
+                    offset++;
+                    if (synapse & 1)
                     {
-                        int value = (neurons.input[anotherInputNeuronIndex >> 6] >> (anotherInputNeuronIndex & 63)) & 1;
-                        if (!value)
-                        {
-                            value = -1;
-                        }
-                        value *= multiplier;
-                        if (value < 0)
-                        {
-                            value = 0;
-                        }
-                        counters[value]++;
+                        counters[((neurons.input[anotherInputNeuronIndex >> 6] >> (anotherInputNeuronIndex & 63)) & 1) == ((synapse >> 1) & 1)]++;
                     }
                 }
                 if (counters[0] > counters[1])
@@ -2383,10 +2374,7 @@ struct Miner
                 }
                 else
                 {
-                    if (counters[0] < counters[1])
-                    {
-                        neurons.input[DATA_LENGTH / 64 + (inputNeuronIndex >> 6)] |= (1ULL << (inputNeuronIndex & 63));
-                    }
+                    neurons.input[DATA_LENGTH / 64 + (inputNeuronIndex >> 6)] |= (1ULL << (inputNeuronIndex & 63));
                 }
             }
         }
@@ -2395,27 +2383,18 @@ struct Miner
         
         for (unsigned int tick = 0; tick < MAX_OUTPUT_DURATION; tick++)
         {
+            unsigned int offset = 0;
             for (unsigned int outputNeuronIndex = 0; outputNeuronIndex < NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH; outputNeuronIndex++)
             {
-                int counters[2] = { 0, 0 };
+                unsigned int counters[2];
+                *((long long*)counters) = 0;
                 for (unsigned int anotherOutputNeuronIndex = 0; anotherOutputNeuronIndex < INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH; anotherOutputNeuronIndex++)
                 {
-                    const unsigned int offset = outputNeuronIndex * (INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH) + anotherOutputNeuronIndex;
                     const unsigned long long synapse = synapses.output[offset >> 5] >> ((offset & 31) << 1);
-                    const int multiplier = ((int)(synapse & 1)) - ((int)((synapse >> 1) & 1));
-                    if (multiplier)
+                    offset++;
+                    if (synapse & 1)
                     {
-                        int value = (neurons.output[anotherOutputNeuronIndex >> 6] >> (anotherOutputNeuronIndex & 63)) & 1;
-                        if (!value)
-                        {
-                            value = -1;
-                        }
-                        value *= multiplier;
-                        if (value < 0)
-                        {
-                            value = 0;
-                        }
-                        counters[value]++;
+                        counters[((neurons.output[anotherOutputNeuronIndex >> 6] >> (anotherOutputNeuronIndex & 63)) & 1) == ((synapse >> 1) & 1)]++;
                     }
                 }
                 if (counters[0] > counters[1])
@@ -2424,10 +2403,7 @@ struct Miner
                 }
                 else
                 {
-                    if (counters[0] < counters[1])
-                    {
-                        neurons.output[INFO_LENGTH / 64 + (outputNeuronIndex >> 6)] |= (1ULL << (outputNeuronIndex & 63));
-                    }
+                    neurons.output[INFO_LENGTH / 64 + (outputNeuronIndex >> 6)] |= (1ULL << (outputNeuronIndex & 63));
                 }
             }
         }
