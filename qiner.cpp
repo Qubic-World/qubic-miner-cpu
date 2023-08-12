@@ -1,8 +1,6 @@
 #define AVX512 0
 #define PORT 21841
-#define VERSION_A 1
-#define VERSION_B 140
-#define VERSION_C 0
+#define EPOCH 0
 
 #include <intrin.h>
 #include <stdio.h>
@@ -2234,7 +2232,7 @@ public:
 
     inline void setProtocol()
     {
-        _protocol = (unsigned char)VERSION_B;
+        _protocol = 0;
     }
 
     inline bool isDejavuZero()
@@ -2284,25 +2282,30 @@ typedef struct
 
 struct Miner
 {
-    #define NUMBER_OF_NEURONS 4194304
-    #define SOLUTION_THRESHOLD 19
+    #define DATA_LENGTH 1024
+    #define INFO_LENGTH 512
+    #define NUMBER_OF_INPUT_NEURONS 640
+    #define NUMBER_OF_OUTPUT_NEURONS 640
+    #define MAX_INPUT_DURATION 10
+    #define MAX_OUTPUT_DURATION 10
+    #define SOLUTION_THRESHOLD 555
 
-    unsigned long long miningData[1024];
+    unsigned long long data[DATA_LENGTH / 64];
     unsigned char computorPublicKey[32];
 
     void initialize()
     {
         unsigned char randomSeed[32];
         memset(randomSeed, 0, sizeof(randomSeed));
-        randomSeed[0] = 126;
-        randomSeed[1] = 27;
-        randomSeed[2] = 26;
-        randomSeed[3] = 27;
-        randomSeed[4] = 26;
-        randomSeed[5] = 27;
-        randomSeed[6] = 26;
-        randomSeed[7] = 27;
-        random(randomSeed, randomSeed, (unsigned char*)miningData, sizeof(miningData));
+        randomSeed[0] = 0;
+        randomSeed[1] = 0;
+        randomSeed[2] = 0;
+        randomSeed[3] = 0;
+        randomSeed[4] = 0;
+        randomSeed[5] = 0;
+        randomSeed[6] = 0;
+        randomSeed[7] = 0;
+        random(randomSeed, randomSeed, (unsigned char*)data, sizeof(data));
 
         memset(computorPublicKey, 0, sizeof(computorPublicKey));
     }
@@ -2319,63 +2322,121 @@ struct Miner
 
     bool findSolution(unsigned char nonce[32])
     {
-        unsigned int neuronLinks[NUMBER_OF_NEURONS][2];
-        unsigned char neuronValues[NUMBER_OF_NEURONS];
+        struct
+        {
+            unsigned long long input[(DATA_LENGTH + NUMBER_OF_INPUT_NEURONS + INFO_LENGTH) / 64];
+            unsigned long long output[(INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH) / 64];
+        } neurons;
+        struct
+        {
+            unsigned long long input[(NUMBER_OF_INPUT_NEURONS + INFO_LENGTH) * (DATA_LENGTH + NUMBER_OF_INPUT_NEURONS + INFO_LENGTH) / (64 / 2)];
+            unsigned long long output[(NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH) * (INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH) / (64 / 2)];
+        } synapses;
 
         _rdrand64_step((unsigned long long*)&nonce[0]);
         _rdrand64_step((unsigned long long*)&nonce[8]);
         _rdrand64_step((unsigned long long*)&nonce[16]);
         _rdrand64_step((unsigned long long*)&nonce[24]);
-        random(computorPublicKey, nonce, (unsigned char*)neuronLinks, sizeof(neuronLinks));
-        for (unsigned int i = 0; i < NUMBER_OF_NEURONS; i++)
+        random(computorPublicKey, nonce, (unsigned char*)&synapses, sizeof(synapses));
+        for (unsigned int inputNeuronIndex = 0; inputNeuronIndex < NUMBER_OF_INPUT_NEURONS + INFO_LENGTH; inputNeuronIndex++)
         {
-            neuronLinks[i][0] %= NUMBER_OF_NEURONS;
-            neuronLinks[i][1] %= NUMBER_OF_NEURONS;
+            const unsigned int offset = inputNeuronIndex * (DATA_LENGTH + NUMBER_OF_INPUT_NEURONS + INFO_LENGTH) + (DATA_LENGTH + inputNeuronIndex);
+            synapses.input[offset >> 5] &= ~(3ULL << (offset & 31));
         }
-        memset(neuronValues, 0xFF, sizeof(neuronValues));
-
-        unsigned int limiter = sizeof(miningData) / sizeof(miningData[0]);
-        unsigned int score = 0;
-        while (true)
+        for (unsigned int outputNeuronIndex = 0; outputNeuronIndex < NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH; outputNeuronIndex++)
         {
-            const unsigned int prevValue0 = neuronValues[NUMBER_OF_NEURONS - 1];
-            const unsigned int prevValue1 = neuronValues[NUMBER_OF_NEURONS - 2];
+            const unsigned int offset = outputNeuronIndex * (INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH) + (INFO_LENGTH + outputNeuronIndex);
+            synapses.output[offset >> 5] &= ~(3ULL << (offset & 31));
+        }
 
-            for (unsigned int j = 0; j < NUMBER_OF_NEURONS; j++)
-            {
-                neuronValues[j] = ~(neuronValues[neuronLinks[j][0]] & neuronValues[neuronLinks[j][1]]);
-            }
+        memcpy(&neurons.input[0], &data, sizeof(data));
+        memset(&neurons.input[sizeof(data) / 8], 0, sizeof(neurons) - sizeof(data));
 
-            if (neuronValues[NUMBER_OF_NEURONS - 1] != prevValue0
-                && neuronValues[NUMBER_OF_NEURONS - 2] == prevValue1)
+        for (unsigned int tick = 0; tick < MAX_INPUT_DURATION; tick++)
+        {
+            for (unsigned int inputNeuronIndex = 0; inputNeuronIndex < NUMBER_OF_INPUT_NEURONS + INFO_LENGTH; inputNeuronIndex++)
             {
-                if (!((miningData[score >> 6] >> (score & 63)) & 1))
+                int counters[2] = { 0, 0 };
+                for (unsigned int anotherInputNeuronIndex = 0; anotherInputNeuronIndex < DATA_LENGTH + NUMBER_OF_INPUT_NEURONS + INFO_LENGTH; anotherInputNeuronIndex++)
                 {
-                    break;
-                }
-
-                score++;
-            }
-            else
-            {
-                if (neuronValues[NUMBER_OF_NEURONS - 2] != prevValue1
-                    && neuronValues[NUMBER_OF_NEURONS - 1] == prevValue0)
-                {
-                    if ((miningData[score >> 6] >> (score & 63)) & 1)
+                    const unsigned int offset = inputNeuronIndex * (DATA_LENGTH + NUMBER_OF_INPUT_NEURONS + INFO_LENGTH) + anotherInputNeuronIndex;
+                    const unsigned long long synapse = synapses.input[offset >> 5] >> ((offset & 31) << 1);
+                    const int multiplier = ((int)(synapse & 1)) - ((int)((synapse >> 1) & 1));
+                    if (multiplier)
                     {
-                        break;
+                        int value = (neurons.input[anotherInputNeuronIndex >> 6] >> (anotherInputNeuronIndex & 63)) & 1;
+                        if (!value)
+                        {
+                            value = -1;
+                        }
+                        value *= multiplier;
+                        if (value < 0)
+                        {
+                            value = 0;
+                        }
+                        counters[value]++;
                     }
-
-                    score++;
+                }
+                if (counters[0] > counters[1])
+                {
+                    neurons.input[DATA_LENGTH / 64 + (inputNeuronIndex >> 6)] &= ~(1ULL << (inputNeuronIndex & 63));
                 }
                 else
                 {
-                    if (!(--limiter))
+                    if (counters[0] < counters[1])
                     {
-                        break;
+                        neurons.input[DATA_LENGTH / 64 + (inputNeuronIndex >> 6)] |= (1ULL << (inputNeuronIndex & 63));
                     }
                 }
             }
+        }
+
+        memcpy(&neurons.output[0], &neurons.input[(DATA_LENGTH + NUMBER_OF_INPUT_NEURONS) / 64], INFO_LENGTH / 8);
+        
+        for (unsigned int tick = 0; tick < MAX_OUTPUT_DURATION; tick++)
+        {
+            for (unsigned int outputNeuronIndex = 0; outputNeuronIndex < NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH; outputNeuronIndex++)
+            {
+                int counters[2] = { 0, 0 };
+                for (unsigned int anotherOutputNeuronIndex = 0; anotherOutputNeuronIndex < INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH; anotherOutputNeuronIndex++)
+                {
+                    const unsigned int offset = outputNeuronIndex * (INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS + DATA_LENGTH) + anotherOutputNeuronIndex;
+                    const unsigned long long synapse = synapses.output[offset >> 5] >> ((offset & 31) << 1);
+                    const int multiplier = ((int)(synapse & 1)) - ((int)((synapse >> 1) & 1));
+                    if (multiplier)
+                    {
+                        int value = (neurons.output[anotherOutputNeuronIndex >> 6] >> (anotherOutputNeuronIndex & 63)) & 1;
+                        if (!value)
+                        {
+                            value = -1;
+                        }
+                        value *= multiplier;
+                        if (value < 0)
+                        {
+                            value = 0;
+                        }
+                        counters[value]++;
+                    }
+                }
+                if (counters[0] > counters[1])
+                {
+                    neurons.output[INFO_LENGTH / 64 + (outputNeuronIndex >> 6)] &= ~(1ULL << (outputNeuronIndex & 63));
+                }
+                else
+                {
+                    if (counters[0] < counters[1])
+                    {
+                        neurons.output[INFO_LENGTH / 64 + (outputNeuronIndex >> 6)] |= (1ULL << (outputNeuronIndex & 63));
+                    }
+                }
+            }
+        }
+
+        unsigned int score = 0;
+
+        for (unsigned int i = 0; i < DATA_LENGTH / 64; i++)
+        {
+            score += (64 - __popcnt64(data[i] ^ neurons.output[(INFO_LENGTH + NUMBER_OF_OUTPUT_NEURONS) / 64 + i]));
         }
 
         return score >= SOLUTION_THRESHOLD;
@@ -2409,11 +2470,11 @@ static DWORD WINAPI miningThreadProc(LPVOID)
     {
         if (miner.findSolution(nonce))
         {
-            while (!EQUAL(*((__m256i*)::nonce), ZERO))
+            /*while (!EQUAL(*((__m256i*)::nonce), ZERO))
             {
                 Sleep(1);
             }
-            *((__m256i*)::nonce) = *((__m256i*)nonce);
+            *((__m256i*)::nonce) = *((__m256i*)nonce);*/
             numberOfFoundSolutions++;
         }
 
@@ -2485,7 +2546,7 @@ int main(int argc, char* argv[])
     }
     else
     {
-        printf("Qiner %d.%d.%d is launched.\n", VERSION_A, VERSION_B, VERSION_C);
+        printf("Qiner %d.0 is launched.\n", EPOCH);
 
         SetConsoleCtrlHandler(ctrlCHandlerRoutine, TRUE);
 
@@ -2509,7 +2570,7 @@ int main(int argc, char* argv[])
             printf("%d threads are used.\n", numberOfThreads);
             for (unsigned int i = numberOfThreads; i-- > 0; )
             {
-                CreateThread(NULL, 67108864, miningThreadProc, 0, 0, NULL);
+                CreateThread(NULL, 2097152, miningThreadProc, 0, 0, NULL);
             }
 
             WSADATA wsaData;
@@ -2610,7 +2671,7 @@ int main(int argc, char* argv[])
             WSACleanup();
         }
 
-        printf("Qiner %d.%d.%d is shut down.\n", VERSION_A, VERSION_B, VERSION_C);
+        printf("Qiner %d.0 is shut down.\n", EPOCH);
     }
     
     return 0;
